@@ -3,6 +3,7 @@
     uv run pokechamp status
     uv run pokechamp update-static [--yes] [--dry-run] [--force]
     uv run pokechamp rollback-static <버전 id>
+    uv run pokechamp web
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from pokechamp.data.db import active_version, connect
+from pokechamp.data.db import connect
 
 KST = timezone(timedelta(hours=9))
 
@@ -28,25 +29,24 @@ def _ago(iso: str) -> str:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    conn = connect()
-    v = active_version(conn)
+    from pokechamp.status import status_data
+    d = status_data(connect())
+    st = d["static"]
     print("[정적 데이터]")
-    if v is None:
+    if st is None:
         print("  없음. `pokechamp update-static`을 실행하세요.")
     else:
-        counts = {t: conn.execute(f"SELECT COUNT(*) FROM {t} WHERE version_id=?", (v["id"],)).fetchone()[0]
-                  for t in ("species", "moves", "items", "abilities", "mega_forms")}
-        print(f"  버전 {v['id']} · 레귤레이션 {v['regulation']} (공지 {v['official_notice_id']}) · "
-              f"Showdown {v['showdown_commit'][:7]} · 적용 {_ago(v['applied_at'])}")
-        print(f"  레귤레이션 기간 {_kst(v['regulation_starts_at'])} ~ {_kst(v['regulation_ends_at'])} (KST)")
-        print(f"  포켓몬 {counts['species']} (메가 {counts['mega_forms']}), 기술 {counts['moves']}, "
-              f"도구 {counts['items']}, 특성 {counts['abilities']}")
-        if v["regulation_ends_at"] and time.time() > v["regulation_ends_at"]:
+        c = st["counts"]
+        print(f"  버전 {st['version']} · 레귤레이션 {st['regulation']} (공지 {st['official_notice_id']}) · "
+              f"Showdown {st['showdown_commit'][:7]} · 적용 {_ago(st['applied_at'])}")
+        print(f"  레귤레이션 기간 {_kst(st['regulation_starts_at'])} ~ {_kst(st['regulation_ends_at'])} (KST)")
+        print(f"  포켓몬 {c['species']} (메가 {c['mega_forms']}), 기술 {c['moves']}, 도구 {c['items']}, 특성 {c['abilities']}")
+        if st["regulation_ended"]:
             print("  ⚠️ 이 레귤레이션은 끝났다. 새 레귤레이션 공지를 확인하고 `pokechamp update-static` 실행을 권장한다.")
     print("[통계 스냅샷]")
     print("  없음. (update-stats는 아직 구현 전)")
     print("[최근 갱신 기록]")
-    for r in conn.execute("SELECT * FROM update_log ORDER BY id DESC LIMIT 5"):
+    for r in d["update_log"][:5]:
         print(f"  {r['ran_at']} {r['kind']} {r['status']} {r['duration_s']}s {r['note'] or ''}")
     return 0
 
@@ -96,6 +96,11 @@ def cmd_rollback_static(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_web(args: argparse.Namespace) -> int:
+    from pokechamp.web.server import serve
+    return serve(port=args.port, open_browser=not args.no_browser)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="pokechamp", description="포켓몬 챔피언스 싱글배틀 보조 에이전트")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -108,6 +113,10 @@ def main(argv: list[str] | None = None) -> int:
     rb = sub.add_parser("rollback-static", help="이전 정적 데이터 버전으로 되돌리기")
     rb.add_argument("version", type=int)
     rb.set_defaults(fn=cmd_rollback_static)
+    wb = sub.add_parser("web", help="엔진 서버와 웹 화면을 띄운다 (진행 현황, 도감, 배틀 해보기)")
+    wb.add_argument("--port", type=int, default=8790)
+    wb.add_argument("--no-browser", action="store_true", help="브라우저를 자동으로 열지 않음")
+    wb.set_defaults(fn=cmd_web)
     args = ap.parse_args(argv)
     return args.fn(args)
 

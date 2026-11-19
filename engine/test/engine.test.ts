@@ -70,3 +70,11 @@ test('server: 배치 요청은 항목별 결과를 돌려준다', () => {
   assert.equal(payload.results.length, 2);
   assert.equal(payload.results[0].ok, true);
 });
+
+test('random_team: 같은 시드는 같은 합법 팀', () => {
+  const a = E.randomTeam({ seed: 'rt' });
+  const b = E.randomTeam({ seed: 'rt' });
+  assert.deepEqual(a.team, b.team);
+  assert.equal(a.team.length, 6);
+  assert.equal(E.validate({ team: a.team }).valid, true);
+});
