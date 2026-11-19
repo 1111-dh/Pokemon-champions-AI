@@ -40,3 +40,13 @@ def priors_config() -> dict[str, Any]:
     c.setdefault("previous_regulation_weight", 0.2)
     c.setdefault("rank_weight_exponent", 1.0)
     return c
+
+
+def sets_config() -> dict[str, Any]:
+    c = dict(load_config().get("sets", {}))
+    c.setdefault("samples_per_species", 3000)
+    c.setdefault("max_archetypes", 40)
+    c.setdefault("ipf_iterations", 30)
+    c.setdefault("rule_generated_weight", 0.5)
+    c.setdefault("seed", 20261119)
+    return c

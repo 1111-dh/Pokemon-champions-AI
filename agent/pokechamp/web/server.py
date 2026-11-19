@@ -95,7 +95,18 @@ class App:
             "SELECT m.id, m.name_ko, m.name_en, m.type, m.category, m.power, m.accuracy, m.max_pp, m.priority, m.description"
             " FROM learnsets l JOIN moves m ON m.version_id=l.version_id AND m.id=l.move_id"
             " WHERE l.version_id=? AND l.species_id=? ORDER BY m.type, m.power DESC", (vid, learn_id))]
-        return {"id": sid, "moves": moves}
+        from pokechamp.sets.archetypes import load_archetypes
+        reg = self.conn.execute("SELECT regulation FROM static_versions WHERE id=?", (vid,)).fetchone()[0]
+        names = {t: {r[0]: r[1] or r[2] for r in self.conn.execute(f"SELECT id, name_ko, name_en FROM {t} WHERE version_id=?", (vid,))}
+                 for t in ("moves", "items", "abilities")}
+        sets = [{"weight": round(a.weight, 4), "item": names["items"].get(a.item, a.item),
+                 "ability": names["abilities"].get(a.ability, a.ability),
+                 "moves": [names["moves"].get(m, m) for m in a.moves], "mega": a.mega_species,
+                 "rule_generated": a.rule_generated, "n_support": a.n_support,
+                 "nature": max(a.nature_dist, key=a.nature_dist.get) if a.nature_dist else None,
+                 "spread": max(a.spread_dist, key=lambda x: x[1])[0] if a.spread_dist else None}
+                for a in load_archetypes(self.conn, learn_id, reg)[:6]]
+        return {"id": sid, "moves": moves, "sets": sets}
 
     # ---------- 공식 공지 ----------
     def news(self, q: dict) -> dict:
