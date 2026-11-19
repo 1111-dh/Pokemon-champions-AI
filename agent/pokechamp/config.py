@@ -29,3 +29,14 @@ def stats_config() -> dict[str, Any]:
     c.setdefault("source_timeout_s", 600)
     c.setdefault("sources", {})
     return c
+
+
+def priors_config() -> dict[str, Any]:
+    c = dict(load_config().get("priors", {}))
+    c.setdefault("half_life_days", 3.0)
+    c.setdefault("stale_after_days", 2)
+    c.setdefault("trend_min_gap_days", 3)
+    c.setdefault("trend_max_gap_days", 14)
+    c.setdefault("previous_regulation_weight", 0.2)
+    c.setdefault("rank_weight_exponent", 1.0)
+    return c
