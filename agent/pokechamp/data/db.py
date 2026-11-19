@@ -147,6 +147,36 @@ CREATE TABLE IF NOT EXISTS usage_teammates (
   species_id TEXT NOT NULL, mate_id TEXT NOT NULL, rank INTEGER, rate REAL,
   PRIMARY KEY (snapshot_id, species_id, mate_id)
 );
+CREATE TABLE IF NOT EXISTS team_samples (
+  id INTEGER PRIMARY KEY,
+  snapshot_id INTEGER REFERENCES snapshots(id) ON DELETE CASCADE,
+  source TEXT NOT NULL,
+  source_team_id TEXT,
+  kind TEXT NOT NULL CHECK (kind IN ('tournament', 'replica', 'manual')),
+  regulation TEXT NOT NULL,
+  team_json TEXT NOT NULL,               -- [{species, item, ability, nature, evs(SP), moves}]
+  rank_or_placement INTEGER,
+  source_url TEXT,
+  created_at TEXT,
+  UNIQUE (source, source_team_id)
+);
+CREATE TABLE IF NOT EXISTS set_archetypes (
+  id INTEGER PRIMARY KEY,
+  species_id TEXT NOT NULL,              -- 기본 폼 id
+  regulation TEXT NOT NULL,
+  built_at TEXT NOT NULL,
+  moves_json TEXT NOT NULL,              -- 정렬된 기술 id 4개
+  item_id TEXT,
+  ability_id TEXT,
+  mega_species_id TEXT,                  -- 메가스톤을 든 원형이면 메가 폼 id (평가는 메가 폼으로)
+  nature_dist_json TEXT NOT NULL,        -- {성격: 확률}
+  spread_dist_json TEXT NOT NULL,        -- [[{hp,atk,def,spa,spd,spe}, 확률], ...]
+  weight REAL NOT NULL,                  -- 그 포켓몬 안에서의 확률 (합 1)
+  n_support INTEGER NOT NULL,            -- 근거가 된 완성 세트 수
+  rule_generated INTEGER NOT NULL,       -- 1 = 주변 분포 + 규칙 필터로 만든 원형
+  source_snapshot_date TEXT              -- 보정에 쓴 최신 통계 날짜
+);
+CREATE INDEX IF NOT EXISTS idx_set_archetypes_species ON set_archetypes (regulation, species_id);
 CREATE TABLE IF NOT EXISTS my_teams (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,

@@ -31,3 +31,16 @@ trend_max_gap_days = 14
 previous_regulation_weight = 0.2
 # 출처는 사용률(%) 대신 순위만 준다. 포켓몬 출현 가중치를 순위로 추정: w ∝ 1 / 순위^지수
 rank_weight_exponent = 1.0
+
+[sets]
+# 세트 원형 만들기 (PROJECT_PLAN 4.7)
+# 포켓몬마다 주변 분포에서 뽑아 볼 후보 세트 수 (규칙 필터를 통과한 것만 원형이 된다)
+samples_per_species = 3000
+# 한 포켓몬에 남길 원형 최대 개수 (가중치 상위)
+max_archetypes = 80
+# IPF(반복 비례 맞춤) 반복 횟수: 원형 가중치를 최신 기술·도구 채용률에 맞춘다
+ipf_iterations = 30
+# 믿음 상태에서 규칙으로 만든 원형에 곱할 사전 가중치 (완성 세트 원형과 섞일 때)
+rule_generated_weight = 0.5
+# 결정적 결과를 위한 시드
+seed = 20261119

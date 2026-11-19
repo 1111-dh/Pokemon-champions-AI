@@ -3,6 +3,7 @@
     uv run pokechamp status
     uv run pokechamp update-static [--yes] [--dry-run] [--force]
     uv run pokechamp update-stats [--force] [--backfill N]
+    uv run pokechamp build-sets [--check N]
     uv run pokechamp rollback-static <버전 id>
     uv run pokechamp web
 """
@@ -122,7 +123,28 @@ def cmd_update_stats(args: argparse.Namespace) -> int:
             print(f"  … 오류 {len(r.errors) - 10}건 더")
         if r.skipped:
             print(f"  건너뜀 {len(r.skipped)}건: {r.skipped[0]}{' …' if len(r.skipped) > 1 else ''}")
+    if any(r.stored for r in reports):
+        from pokechamp.sets.archetypes import build_all
+        print("새 통계로 세트 원형을 다시 만드는 중…")
+        b = build_all(conn)
+        print(f"  원형 {b['archetypes']}개 (통계 날짜 {b['stats_date']})")
     return 0 if all(r.status != "failed" for r in reports) else 1
+
+
+def cmd_build_sets(args: argparse.Namespace) -> int:
+    from pokechamp.sets.archetypes import build_all, check_samples
+    conn = connect()
+    print("세트 원형을 만드는 중… (포켓몬마다 후보를 뽑고 규칙 필터와 IPF 보정)")
+    r = build_all(conn)
+    print(f"포켓몬 {r['species']}, 원형 {r['archetypes']}개, 통계 날짜 {r['stats_date']}, "
+          f"완성 세트가 있는 포켓몬 {len(r['with_samples'])}, 통계 없이 기본 세트로 대체 {len(r['fallback'])}")
+    if r["fallback"]:
+        print(f"  기본 세트 대체: {', '.join(r['fallback'][:20])}")
+    c = check_samples(conn, args.check)
+    print(f"검사: 세트 {c['samples']}개 중 규칙 위반 {c['violations']}개")
+    for e in c["examples"]:
+        print(f"  ✖ {e}")
+    return 0 if c["violations"] == 0 else 1
 
 
 def cmd_rollback_static(args: argparse.Namespace) -> int:
@@ -151,6 +173,9 @@ def main(argv: list[str] | None = None) -> int:
     ust.add_argument("--force", action="store_true", help="캐시를 무시하고, 이미 저장한 날짜도 다시 받아 교체")
     ust.add_argument("--backfill", type=int, help="처음 실행 시 받아 올 일별 스냅샷 수 (기본은 설정값)")
     ust.set_defaults(fn=cmd_update_stats)
+    bs = sub.add_parser("build-sets", help="세트 원형(결합 분포)을 다시 만들고 규칙 위반을 검사")
+    bs.add_argument("--check", type=int, default=10_000, help="검사할 샘플 세트 수")
+    bs.set_defaults(fn=cmd_build_sets)
     rb = sub.add_parser("rollback-static", help="이전 정적 데이터 버전으로 되돌리기")
     rb.add_argument("version", type=int)
     rb.set_defaults(fn=cmd_rollback_static)

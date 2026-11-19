@@ -322,6 +322,11 @@ async function showDex(id) {
       <div class="statbars">${Object.entries(p.stats).map(([k, v]) => `<span class="muted">${STAT_KO[k]}</span><strong>${v}</strong>
         <span class="statbar"><i style="width:${Math.min(100, (v / max) * 100)}%"></i></span>`).join("")}</div>
       ${megas.length ? `<p class="info-line">메가진화: ${megas.map((m) => `<a href="#" data-id="${m.id}">${esc(m.name_ko)}</a>`).join(", ")}</p>` : ""}
+      ${d.sets && d.sets.length ? `<h3 style="margin-top:14px">자주 보이는 세트 (원형 상위 ${d.sets.length}개)</h3>
+      <table class="table"><thead><tr><th>확률</th><th>도구</th><th>기술</th><th>성격·배분</th></tr></thead><tbody>
+      ${d.sets.map((x) => `<tr><td>${(x.weight * 100).toFixed(1)}%</td><td>${esc(x.item || "-")}${x.mega ? " (메가)" : ""}</td>
+        <td>${x.moves.map(esc).join(", ")}</td><td class="muted">${esc(x.nature || "")}${x.spread ? ` ${Object.entries(x.spread).filter(([, v]) => v).map(([k, v]) => `${STAT_KO[k]} ${v}`).join(" / ")}` : ""}</td></tr>`).join("")}
+      </tbody></table><p class="muted">${d.sets.some((x) => !x.rule_generated) ? "완성 세트 근거 포함." : "통계의 주변 분포에 규칙 필터와 보정(IPF)을 적용해 만든 추정 세트입니다."}</p>` : ""}
       <h3 style="margin-top:14px">배울 수 있는 기술 ${d.moves.length}개</h3>
       <table class="table"><thead><tr><th>기술</th><th>타입</th><th>분류</th><th>위력</th><th>명중</th><th>PP</th></tr></thead>
       <tbody>${d.moves.map((m) => `<tr title="${esc(m.description)}"><td>${esc(m.name_ko || m.name_en)}</td><td>${typeChip(m.type)}</td>
