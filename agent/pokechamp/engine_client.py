@@ -74,3 +74,12 @@ class EngineClient:
 
     def simulate(self, seed: str, reps: int = 1, **kwargs: Any) -> dict[str, Any]:
         return self._call("/simulate", {"seed": seed, "reps": reps, **kwargs})
+
+    def damage(self, attacker: dict[str, Any], defender: dict[str, Any], move: str,
+               field: dict[str, str] | None = None) -> dict[str, Any]:
+        """attacker/defender: {"set": PokemonSet, "mega": bool, "boosts": {...}, "status": "brn", "hpPercent": 100}.
+        결과: rolls(16단계), critRolls, percent, typeEffectiveness, immune, status, calc(교차 검증)."""
+        body: dict[str, Any] = {"attacker": attacker, "defender": defender, "move": move}
+        if field:
+            body["field"] = field
+        return self._call("/damage", body)

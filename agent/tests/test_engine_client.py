@@ -42,3 +42,12 @@ def test_unknown_team_text_is_an_error_not_a_crash():
 def test_bad_url_raises_engine_error():
     with pytest.raises(EngineError):
         EngineClient("http://127.0.0.1:1").validate_team(TEAM)
+
+
+def test_damage_roundtrip():
+    chomp = {"species": "Garchomp", "item": "Garchompite Z", "ability": "Rough Skin", "nature": "Jolly",
+             "evs": {"hp": 2, "atk": 32, "spe": 32}}
+    prim = {"species": "Primarina", "item": "Sitrus Berry", "ability": "Torrent", "nature": "Modest",
+            "evs": {"hp": 32, "spa": 32, "def": 2}}
+    r = client.damage({"set": prim}, {"set": chomp, "mega": True}, "Ice Beam")
+    assert len(r["rolls"]) == 16 and r["typeEffectiveness"] == 2 and r["defender"]["species"] == "Garchomp-Mega-Z"

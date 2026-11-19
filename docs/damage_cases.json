@@ -1,0 +1,4 @@
+{
+  "_comment": "인게임에서 직접 확인한 데미지 사례. engine/test/damage.test.ts가 엔진 계산(16단계 또는 급소 값)에 관찰값이 들어가는지 검사한다. observed는 방어자가 잃은 HP(정수)이며, 방어자가 상대 포켓몬이라 %만 보였다면 observed_percent에 표시값을 넣는다 (소수점 버림).",
+  "cases": []
+}

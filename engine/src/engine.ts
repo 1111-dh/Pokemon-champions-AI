@@ -4,6 +4,7 @@ import path from 'node:path';
 import { PS, FORMAT_ID, toPsSeed } from './ps';
 import { mulberry32, randomChoice } from './random-chooser';
 import { legalRandomTeam, validateTeam } from './teams';
+export { damage } from './damage';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { State } = require(path.resolve(__dirname, '../external/pokemon-showdown/dist/sim/state'));

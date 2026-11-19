@@ -10,6 +10,7 @@ const ROUTES: Record<string, (req: any) => unknown> = {
   '/simulate': E.simulate,
   '/validate_team': E.validate,
   '/random_team': E.randomTeam,
+  '/damage': E.damage,
 };
 
 function runOne(fn: (req: any) => unknown, body: any) {
