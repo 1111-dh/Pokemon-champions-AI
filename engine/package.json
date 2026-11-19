@@ -1,0 +1,23 @@
+{
+  "name": "pokechamp-engine",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pokémon Showdown champions 모드를 감싸는 배틀 엔진 서버",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "setup:showdown": "cd external/pokemon-showdown && npm ci --no-audit --no-fund && node build",
+    "typecheck": "tsc --noEmit",
+    "selfplay": "tsx src/selfplay.ts",
+    "verify": "node scripts/verify-format.js",
+    "server": "tsx src/server.ts",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

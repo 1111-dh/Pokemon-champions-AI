@@ -1,1 +1,12 @@
 .DS_Store
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/raw/
+data/db/
+data/logs/
+
+# claude-mem이 자동 생성하는 Copilot용 파일
+.github/copilot-instructions.md
