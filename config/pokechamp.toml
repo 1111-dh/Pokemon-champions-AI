@@ -44,3 +44,33 @@ ipf_iterations = 30
 rule_generated_weight = 0.5
 # 결정적 결과를 위한 시드
 seed = 20261119
+
+[teambuild]
+# 파티 추천 (PROJECT_PLAN 7절). Score = E[V] − α(E[V] − CVaR[V]) − β·SD_시나리오
+alpha = 0.5
+beta = 0.5
+# CVaR 하위 비율
+cvar_fraction = 0.1
+# 위협(상대 메타): 출현 가중치 상위 몇 마리, 포켓몬마다 원형 몇 개
+threat_species = 60
+threat_archetypes = 3
+# 내 후보: 포켓몬마다 원형 몇 개 (국소 탐색이 도구·기술을 더 바꿔 본다)
+candidate_archetypes = 2
+# 점수 계산에 쓰는 상대 팀 수 (메타에서 합성, 같은 팀을 시나리오별로 다시 가중한다)
+opponent_teams = 64
+# 상대 팀 합성 때 동료 통계를 반영하는 세기 (0이면 출현 가중치만)
+teammate_strength = 3.0
+# 메타 시나리오 (b): 상위 포켓몬 비중을 올린 분포 w^지수, (c): 추세 반영 세기 (추세를 모르면 건너뜀)
+scenario_top_exponent = 1.5
+scenario_trend_strength = 0.5
+# 3:3 선출 값 = 이 비율 × (1:1 짝짓기 최선값) + 나머지 × (9쌍 평균)
+assignment_weight = 0.6
+# 팀 안 메가 후보(메가스톤 소지자) 최대 수
+max_mega = 2
+# 빔 서치 폭, 단계마다 정밀 평가할 후보 수, 국소 탐색 반복 수
+beam_width = 6
+prefilter = 24
+local_search_rounds = 2
+# 균형 근사 반복 수 (탐색 중), 최종 출력은 선형계획으로 정확히 푼다
+nash_iterations = 300
+seed = 20261119
