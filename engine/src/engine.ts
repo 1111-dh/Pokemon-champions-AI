@@ -2,9 +2,10 @@
 // 배틀 상태는 Showdown State.serializeBattle 결과(JSON 객체)를 그대로 주고받는다.
 import path from 'node:path';
 import { PS, FORMAT_ID, toPsSeed } from './ps';
-import { mulberry32, randomChoice } from './random-chooser';
+import { maxDamageChoice, mulberry32, randomChoice } from './random-chooser';
 import { legalRandomTeam, validateTeam } from './teams';
 export { damage } from './damage';
+export { matchupFast } from './matchup';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { State } = require(path.resolve(__dirname, '../external/pokemon-showdown/dist/sim/state'));
@@ -38,6 +39,8 @@ export interface NewBattleReq {
   p1: TeamInput;
   p2: TeamInput;
   seed: string;
+  /** 'bss'(기본, 6마리 중 3마리) 또는 'custom'(팀 크기 자유, 1:1 상성 시뮬레이션용) */
+  format?: 'bss' | 'custom';
   /** 팀 프리뷰 선택 (예: "team 312"). 주면 프리뷰를 바로 진행한다. */
   picks?: { p1?: string; p2?: string };
 }
@@ -49,7 +52,7 @@ function createBattle(req: NewBattleReq) {
     return team;
   });
   const battle = new PS.Battle({
-    formatid: FORMAT_ID,
+    formatid: req.format === 'custom' ? 'gen9championscustomgame' : FORMAT_ID,
     seed: toPsSeed(req.seed),
     p1: { name: 'p1', team: teams[0] },
     p2: { name: 'p2', team: teams[1] },
@@ -157,7 +160,7 @@ export interface SimulateReq extends Partial<NewBattleReq> {
   state?: any;
   /** 앞부분에 강제할 선택 시퀀스: [[p1선택, p2선택], ...]. 이후는 policy로 진행한다. */
   choices?: [string | null, string | null][];
-  policy?: 'random';
+  policy?: 'random' | 'maxdamage';
   reps?: number;
   seed: string;
   maxTurns?: number;
@@ -184,7 +187,7 @@ export function simulate(req: SimulateReq) {
         if (battle.ended) break;
         const rq = side.activeRequest;
         if (!rq || rq.wait || side.isChoiceDone()) continue;
-        const c = randomChoice(rq, rng);
+        const c = req.policy === 'maxdamage' ? maxDamageChoice(battle, side, rng) : randomChoice(rq, rng);
         if (c === null) continue;
         if (!battle.choose(side.id, c)) battle.choose(side.id, 'default');
         progressed = true;
