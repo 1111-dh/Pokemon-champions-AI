@@ -272,6 +272,51 @@ def cmd_teams(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_recommend_team(args: argparse.Namespace) -> int:
+    import json
+    from pokechamp.input.team_text import NameIndex, TeamParseError
+    from pokechamp.teambuild.report import text_report
+    from pokechamp.teambuild.search import Builder, RecommendError
+    from pokechamp.teambuild.validate import validate
+    from pokechamp.teams.store import load_team, save_team, validate as validate_team
+    conn = connect()
+    idx = NameIndex(conn)
+    try:
+        fixed = [idx.find("species", n)[0] for n in args.fix]
+        exclude = [idx.find("species", n)[0] for n in args.exclude]
+    except TeamParseError as e:
+        print(e)
+        return 1
+    locked = []
+    if args.keep_team:
+        team = load_team(conn, args.keep_team)["team"]
+        slots = [int(x) for x in args.keep.split(",")] if args.keep else range(1, len(team) + 1)
+        locked = [team[i - 1] for i in slots]
+    log = (lambda s: None) if args.json else (lambda s: print(s, file=sys.stderr, flush=True))
+    try:
+        b = Builder(conn, seed=args.seed, log=log)
+        r = b.run(fixed, locked, exclude)
+    except RecommendError as e:
+        print(e)
+        return 1
+    v = validate(b, r["_units"], args.validate, f"{r['seed']}-check") if args.validate else None
+    r.pop("_units")
+    if args.save:
+        ok, problems = validate_team(r["team"])
+        save_team(conn, args.save, r["team"], source="recommended", valid=ok, problems=problems, replace=args.replace)
+        r["saved_as"] = args.save
+    if args.json:
+        if v:
+            for k in ("recommended", "usage_top", "random"):
+                v[k].pop("scores", None)
+        print(json.dumps({**r, "validation": v}, ensure_ascii=False, indent=2, default=float))
+    else:
+        print(text_report(r, v))
+        if args.save:
+            print(f"\n'{args.save}' 이름으로 저장했다 (source=recommended).")
+    return 0
+
+
 def cmd_rollback_static(args: argparse.Namespace) -> int:
     from pokechamp.data.static.update import activate_version
     conn = connect()
@@ -319,6 +364,18 @@ def main(argv: list[str] | None = None) -> int:
     tm.add_argument("action", choices=["list", "show", "delete"], nargs="?", default="list")
     tm.add_argument("name", nargs="?")
     tm.set_defaults(fn=cmd_teams)
+    rt = sub.add_parser("recommend-team", help="파티 추천: 고정한 0~5마리를 기준으로 나머지를 채운다")
+    rt.add_argument("--fix", action="append", default=[], help="꼭 넣을 포켓몬 (세트는 탐색이 고른다, 여러 번 가능)")
+    rt.add_argument("--keep-team", help="세트까지 고정할 포켓몬을 가져올 저장된 팀 이름")
+    rt.add_argument("--keep", help="--keep-team에서 고정할 슬롯 번호 (예: 1,3). 없으면 전부")
+    rt.add_argument("--exclude", action="append", default=[], help="뺄 포켓몬 (여러 번 가능)")
+    rt.add_argument("--seed", help="시드 (기본은 설정값, 같은 시드면 같은 결과)")
+    rt.add_argument("--validate", type=int, default=0, metavar="N",
+                    help="정밀 시뮬레이션으로 검증: 메타 팀 N개와 짝지은 대전 (사용률 상위·무작위 팀과 비교)")
+    rt.add_argument("--save", help="이 이름으로 내 팀에 저장")
+    rt.add_argument("--replace", action="store_true", help="같은 이름의 팀이 있으면 덮어쓰기")
+    rt.add_argument("--json", action="store_true", help="JSON으로 출력")
+    rt.set_defaults(fn=cmd_recommend_team)
     rb = sub.add_parser("rollback-static", help="이전 정적 데이터 버전으로 되돌리기")
     rb.add_argument("version", type=int)
     rb.set_defaults(fn=cmd_rollback_static)

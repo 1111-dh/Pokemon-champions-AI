@@ -50,3 +50,15 @@ def sets_config() -> dict[str, Any]:
     c.setdefault("rule_generated_weight", 0.5)
     c.setdefault("seed", 20261119)
     return c
+
+
+def teambuild_config() -> dict[str, Any]:
+    c = dict(load_config().get("teambuild", {}))
+    defaults = {"alpha": 0.5, "beta": 0.5, "cvar_fraction": 0.1, "threat_species": 60, "threat_archetypes": 3,
+                "candidate_archetypes": 2, "opponent_teams": 64, "teammate_strength": 3.0,
+                "scenario_top_exponent": 1.5, "scenario_trend_strength": 0.5, "assignment_weight": 0.6,
+                "max_mega": 2, "beam_width": 6, "prefilter": 24, "local_search_rounds": 2,
+                "nash_iterations": 300, "seed": 20261119}
+    for k, v in defaults.items():
+        c.setdefault(k, v)
+    return c
