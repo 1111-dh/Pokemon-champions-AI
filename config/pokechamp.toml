@@ -73,6 +73,10 @@ prefilter = 24
 local_search_rounds = 2
 # 균형 근사 반복 수 (탐색 중), 최종 출력은 선형계획으로 정확히 푼다
 nash_iterations = 300
+# 3:3 시뮬레이션 재평가 (단계 4): 빔 상위 몇 팀을 메타 팀과 3:3으로 시뮬레이션해 승률로 고른다 (1이면 끔).
+# 상대 팀 하나당 판 수(시드 절반 × 진영 교대). 국소 탐색 결과도 시뮬레이션으로 확인해 승률이 떨어지면 되돌린다
+rerank_candidates = 6
+rerank_games_per_opponent = 8
 seed = 20261119
 
 [select]

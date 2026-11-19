@@ -58,7 +58,8 @@ def teambuild_config() -> dict[str, Any]:
                 "candidate_archetypes": 2, "opponent_teams": 64, "teammate_strength": 3.0,
                 "scenario_top_exponent": 1.5, "scenario_trend_strength": 0.5, "assignment_weight": 0.6,
                 "max_mega": 2, "beam_width": 6, "prefilter": 24, "local_search_rounds": 2,
-                "nash_iterations": 300, "seed": 20261119}
+                "nash_iterations": 300, "rerank_candidates": 6, "rerank_games_per_opponent": 8,
+                "seed": 20261119}
     for k, v in defaults.items():
         c.setdefault(k, v)
     return c

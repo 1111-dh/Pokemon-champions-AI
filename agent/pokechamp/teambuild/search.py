@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import random
 import sqlite3
 import time
 from itertools import combinations
@@ -74,7 +75,8 @@ class Builder:
         self.rules = load_rules(conn, v["id"])
         self.names = Names(conn, v["id"])
         self.num = {r[0]: r[1] for r in conn.execute("SELECT id, num FROM species WHERE version_id=?", (v["id"],))}
-        self.cache = MatchupCache(conn, client)
+        self.client = client or EngineClient()
+        self.cache = MatchupCache(conn, self.client)
         self.pool = Pool(self.cache)
         self.max_mega = int(self.cfg["max_mega"])
 
@@ -329,6 +331,76 @@ class Builder:
         return [{"out": self.names.ko("species", team[i].species), "in": self.names.ko("species", u.species),
                  "line_ko": self.names.line_ko(u.set), "score_delta": round(float(s - base), 3)} for s, u in res[:k]]
 
+    # ---------- 3:3 시뮬레이션 재평가 (단계 4) ----------
+    def sim_eval(self, teams: list[list[Unit]], label: str) -> list[dict[str, Any]]:
+        """후보 팀마다 메타 팀과 3:3 시뮬레이션(최대 데미지 봇). 선출은 양쪽 모두 그 팀의 근사 균형 전략(선출 게임 균형)에서
+        뽑고 선봉은 뽑힌 3마리 중 무작위다. 같은 상대·시드를 모든 후보에 써서 짝지어 비교한다.
+        상대 팀 하나당 rerank_games_per_opponent판(시드 절반 × 진영 교대)."""
+        from pokechamp.teambuild.game import subset_slots
+        from pokechamp.teambuild.validate import engine_set, summarize
+
+        reps = max(1, int(self.cfg["rerank_games_per_opponent"]) // 2)
+        opp_sets = [[engine_set(u.set) for u in t] for t in self.meta.teams]
+        opp_slots = [subset_slots([u.mega_row for u in t], limit_mega=False) for t in self.meta.teams]
+        w0 = self.meta.scenario_weights[0]
+        out = []
+        for ti, team in enumerate(teams):
+            _, A, X, Y = self.ev.exact(team)
+            my_slots = subset_slots([u.mega_row for u in team], limit_mega=True)
+            mine = [engine_set(u.set) for u in team]
+            items, owner = [], []
+            for i, o in enumerate(opp_sets):
+                for r in range(reps):
+                    rng = random.Random(f"{self.seed}-{label}-rr{i}-{r}-{self.team_key(team)}")
+                    a = list(my_slots[rng.choices(range(len(my_slots)), weights=list(np.maximum(X[i], 0)))[0]])
+                    b = list(opp_slots[i][rng.choices(range(len(opp_slots[i])), weights=list(np.maximum(Y[i], 0)))[0]])
+                    rng.shuffle(a)
+                    rng.shuffle(b)
+                    pa, pb = "team " + "".join(str(k + 1) for k in a), "team " + "".join(str(k + 1) for k in b)
+                    seed = f"{self.seed}-rr{i}-{r}"
+                    items.append({"p1": mine, "p2": o, "seed": seed, "policy": "maxdamage", "reps": 1, "picks": {"p1": pa, "p2": pb}})
+                    owner.append((i, "p1"))
+                    items.append({"p1": o, "p2": mine, "seed": seed, "policy": "maxdamage", "reps": 1, "picks": {"p1": pb, "p2": pa}})
+                    owner.append((i, "p2"))
+            res = []
+            for k in range(0, len(items), 400):
+                res += self.client.batch("/simulate", items[k:k + 400])
+            per: dict[int, list[float]] = {}
+            for (i, side), r in zip(owner, res):
+                if not r.get("ok") or r["result"]["wins"]["unfinished"]:
+                    continue
+                w = r["result"]["wins"]
+                per.setdefault(i, []).append(1.0 if w[side] else 0.0 if (w["p1"] or w["p2"]) else 0.5)
+            # 상대 팀별 평균을 현재 메타 가중치로 합친다 (팀 점수의 E[V]와 같은 가중)
+            idx = sorted(per)
+            vals = np.array([np.mean(per[i]) for i in idx])
+            ww = w0[idx] / w0[idx].sum()
+            sm = summarize([float(np.mean(per[i])) for i in idx])
+            out.append({"team": team, "win_rate": float(vals @ ww), "unweighted": sm, "per_opponent": vals, "weights": ww,
+                        "games": len(res), "score": float(self.ev.score(team).score)})
+        return out
+
+    def rerank_summary(self, rr: dict[str, Any] | None) -> dict[str, Any] | None:
+        if rr is None:
+            return None
+        cands = []
+        for i, c in enumerate(rr["candidates"]):
+            cands.append({"rank": i + 1, "members": [self.names.ko("species", u.species) for u in c["team"]],
+                          "score": round(c["score"], 4), "win_rate": round(c["win_rate"], 4),
+                          "lo": c["unweighted"]["lo"], "hi": c["unweighted"]["hi"], "games": c["games"],
+                          "chosen": i == rr["winner"]})
+        return {"candidates": cands, "local": rr.get("local"),
+                "policy": "메타 팀과 3:3 시뮬레이션(최대 데미지 봇), 양쪽 근사 균형 선출, 메타 가중 평균"}
+
+    @staticmethod
+    def paired_gap(a: dict[str, Any], b: dict[str, Any]) -> tuple[float, float]:
+        """두 후보의 상대 팀별 승률 차이의 가중 평균과 표준오차."""
+        d = a["per_opponent"] - b["per_opponent"]
+        w = a["weights"]
+        mean = float(d @ w)
+        se = float(np.sqrt(((d - mean) ** 2) @ (w ** 2)))
+        return mean, se
+
     # ---------- 전체 ----------
     def run(self, fixed_species: list[str] | None = None, locked_sets: list[dict[str, Any]] | None = None,
             exclude: list[str] | None = None) -> dict[str, Any]:
@@ -337,8 +409,31 @@ class Builder:
         self.log(f"빔 서치 ({time.time() - t0:.0f}초)")
         top = self.beam()
         team, best = top[0][1], top[0][0]
+        rerank: dict[str, Any] | None = None
+        k = int(self.cfg["rerank_candidates"])
+        if k > 1 and len(top) > 1:
+            self.log(f"3:3 시뮬레이션 재평가: 빔 상위 {min(k, len(top))}팀 ({time.time() - t0:.0f}초)")
+            sims = self.sim_eval([t for _, t in top[:k]], "beam")
+            winner = max(range(len(sims)), key=lambda i: (sims[i]["win_rate"], -i))
+            for i, sm in enumerate(sims):
+                self.log(f"  후보 {i + 1}: 점수 {sm['score']:.3f} · 시뮬레이션 승률 {sm['win_rate']:.1%}"
+                         + (" ← 선택" if i == winner else ""))
+            team, best = top[winner][1], top[winner][0]
+            rerank = {"candidates": sims, "winner": winner}
         self.log(f"국소 탐색 ({time.time() - t0:.0f}초)")
+        before = team
         team, best, changes = self.local_search(team, best)
+        if rerank is not None and changes:
+            # 국소 탐색은 근사 점수로 고친다. 시뮬레이션 승률이 유의하게(95%) 떨어졌을 때만 되돌린다 (잡음으로 되돌리지 않게)
+            after = self.sim_eval([team], "local")[0]
+            base = rerank["candidates"][rerank["winner"]]
+            gap, se = self.paired_gap(after, base)
+            self.log(f"  국소 탐색 결과 시뮬레이션 승률 {after['win_rate']:.1%} (전 {base['win_rate']:.1%}, 차이 {gap:+.1%} ± {se:.1%})")
+            rerank["local"] = {"win_rate": after["win_rate"], "before": base["win_rate"], "gap": gap, "se": se,
+                               "kept": gap + 1.96 * se >= 0}
+            if gap + 1.96 * se < 0:
+                team, best = before, self.ev.score(before)
+                changes = [f"(되돌림) {c}" for c in changes]
         self.log(f"최종 평가: 선형계획 ({time.time() - t0:.0f}초)")
         an = self.analyze(team)
         ts: TeamScore = an["score"]
@@ -356,5 +451,6 @@ class Builder:
             "weaknesses": an["weaknesses"], "mega": an["mega"], "local_search_changes": changes,
             "replacements": self.replacements(team, ts), "notes": self.meta.notes, "warnings": warnings,
             "evaluations": self.ev.evals, "new_matchups": self.cache.computed,
+            "rerank": self.rerank_summary(rerank),
             "_units": team,
         }

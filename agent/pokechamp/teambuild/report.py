@@ -40,6 +40,16 @@ def text_report(r: dict[str, Any], v: dict[str, Any] | None = None) -> str:
             L.append(f"- {x['out']} → {x['line_ko']} (점수 {x['score_delta']:+.3f})")
     for n in r["notes"]:
         L.append(f"참고: {n}")
+    rr = r.get("rerank")
+    if rr:
+        L += ["", f"3:3 시뮬레이션 재평가 ({rr['policy']})"]
+        for c in rr["candidates"]:
+            mark = " ← 선택" if c["chosen"] else ""
+            L.append(f"- 후보 {c['rank']}: 승률 {c['win_rate']:.1%} · 점수 {c['score']:.3f} · {', '.join(c['members'])}{mark}")
+        if rr.get("local"):
+            lo = rr["local"]
+            L.append(f"- 국소 탐색 뒤 {lo['win_rate']:.1%} (전 {lo['before']:.1%}, 차이 {lo['gap']:+.1%} ± {lo['se']:.1%})"
+                     + (" → 유지" if lo["kept"] else " → 유의하게 낮아져 되돌림"))
     if v:
         L += ["", f"검증 (정밀 시뮬레이션, {v['policy']}, 추천과 다른 시드로 합성한 메타 팀 상대 짝지은 대전)",
               f"- 추천 팀: {fmt(v['recommended'])}",
