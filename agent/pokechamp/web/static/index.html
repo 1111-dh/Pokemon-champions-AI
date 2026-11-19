@@ -27,6 +27,7 @@
   <nav class="tabs" role="tablist" aria-label="화면">
     <button role="tab" data-tab="progress" aria-selected="true">진행 현황</button>
     <button role="tab" data-tab="battle">배틀 해보기</button>
+    <button role="tab" data-tab="recommend">파티 추천</button>
     <button role="tab" data-tab="dex">도감</button>
     <button role="tab" data-tab="team">팀 검증</button>
     <button role="tab" data-tab="news">공식 공지</button>
@@ -108,6 +109,30 @@
           <ol id="battle-log" class="log" aria-live="polite"></ol>
         </aside>
       </div>
+    </section>
+
+    <!-- 파티 추천 -->
+    <section id="tab-recommend" class="tab-panel" role="tabpanel" hidden>
+      <div class="panel">
+        <div class="rec-form">
+          <label>꼭 넣을 포켓몬 <input id="rec-fix" class="input" placeholder="예: 한카리아스, 누리레느 (비우면 6마리 모두 생성)"></label>
+          <label>뺄 포켓몬 <input id="rec-exclude" class="input" placeholder="쉼표로 구분"></label>
+          <label>시드 <input id="rec-seed" class="input" placeholder="비우면 설정값 (같은 시드면 같은 결과)"></label>
+          <label>검증
+            <select id="rec-validate" class="input">
+              <option value="0">안 함</option>
+              <option value="300">메타 팀 300개 (600판, 약 15초)</option>
+              <option value="1200">메타 팀 1,200개 (2,400판, 약 50초)</option>
+            </select>
+          </label>
+        </div>
+        <div class="run-row">
+          <button class="btn btn-primary" id="rec-run">추천받기</button>
+          <input id="rec-save" class="input" placeholder="저장할 팀 이름 (선택)" aria-label="저장할 팀 이름">
+          <span class="muted">처음 한 번은 상성 계산에 1분쯤 걸리고, 그다음부터는 10초 남짓입니다. 계산하는 동안 다른 요청은 기다립니다.</span>
+        </div>
+      </div>
+      <div id="rec-result" class="stack"></div>
     </section>
 
     <!-- 도감 -->

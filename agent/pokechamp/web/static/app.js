@@ -373,6 +373,79 @@ async function loadTeams() {
   } catch (e) { $("#team-list").textContent = e.message; }
 }
 
+// ---------------- 파티 추천 ----------------
+const pct1 = (x) => `${(x * 100).toFixed(1)}%`;
+function fmtSim(r) {
+  return r && r.win_rate !== null ? `${pct1(r.win_rate)} <span class="muted">(95% 구간 ${pct1(r.lo)}~${pct1(r.hi)}, ${r.games.toLocaleString()}판)</span>` : "결과 없음";
+}
+function recHtml(r) {
+  const s = r.score;
+  const members = r.members.map((m) => `<li class="rec-mon">
+      ${sprite(m.sprite)}
+      <div><div class="nm">${esc(m.species_ko)}${m.mega ? ` <span class="state-badge">메가: ${esc(m.mega)}</span>` : ""}
+        <span class="muted">균형 선출 ${Math.round(m.pick_rate * 100)}%</span></div>
+        <div class="info-line">${esc(m.line_ko)}</div>
+        <div class="muted">${esc(m.role)}</div></div></li>`).join("");
+  const megas = r.mega.holders.map((h) => `<li><strong>${esc(h.mega)}</strong> <span class="muted">선출 ${Math.round(h.pick_rate * 100)}%</span>
+      · 약한 상대: ${esc(h.weak_to.join(", ") || "없음")}
+      <ul>${h.partners.map((p) => `<li>${esc(p.pair.join(" + "))}: 약한 상대의 ${Math.round(p.covers * 100)}% 커버</li>`).join("")}</ul></li>`).join("");
+  const v = r.validation;
+  const diff = (d) => d && d.diff !== null ? `${d.diff >= 0 ? "+" : ""}${pct1(d.diff)} (95% 구간 ${pct1(d.lo)}~${pct1(d.hi)})` : "-";
+  return `
+    ${r.warnings.length ? `<div class="panel warn-box">${r.warnings.map((w) => `<p>${esc(w)}</p>`).join("")}</div>` : ""}
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-head"><h2>추천 팀</h2><span class="muted">시드 ${esc(r.seed)} · ${esc(r.stats)}${r.saved_as ? ` · '${esc(r.saved_as)}' 저장함` : ""}</span></div>
+        <ul class="rec-list">${members}</ul>
+      </div>
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-head"><h2>팀 점수 ${s.score.toFixed(3)}</h2></div>
+          <div class="kv">
+            <span class="k">기대값</span><span>${s.mean.toFixed(3)}</span>
+            <span class="k">하위 ${Math.round(s.cvar_fraction * 100)}% 평균</span><span>${s.cvar.toFixed(3)}</span>
+            <span class="k">시나리오 편차</span><span>${s.sd.toFixed(3)}</span>
+            ${r.scenarios.map((x) => `<span class="k">${esc(x.name)}</span><span>${x.expected.toFixed(3)}</span>`).join("")}
+          </div>
+          <p class="muted">점수 = 기대값 − ${s.alpha}×(기대값 − 하위 평균) − ${s.beta}×편차. 빠른 상성 근사로 구한 선출 게임 값이라 실제 승률이 아니라 팀끼리 비교하는 점수입니다.</p>
+        </div>
+        ${v ? `<div class="panel"><div class="panel-head"><h2>시뮬레이션 검증</h2></div>
+          <div class="kv">
+            <span class="k">추천 팀</span><span>${fmtSim(v.recommended)}</span>
+            <span class="k">사용률 상위 팀</span><span>${fmtSim(v.usage_top)}</span>
+            <span class="k">무작위 팀</span><span>${fmtSim(v.random)}</span>
+            <span class="k">상위 팀 대비</span><span>${diff(v.vs_usage_top)}</span>
+            <span class="k">무작위 대비</span><span>${diff(v.vs_random)}</span>
+          </div>
+          <p class="muted">${esc(v.policy)}. 사용률 상위 팀: ${esc(v.usage_top_team.join(", "))}</p></div>` : ""}
+        ${megas ? `<div class="panel"><div class="panel-head"><h2>메가 후보 점검</h2></div><ul class="plain">${megas}</ul></div>` : ""}
+        <div class="panel"><div class="panel-head"><h2>남는 약점</h2></div>
+          ${r.weaknesses.length ? `<ul class="plain">${r.weaknesses.map((w) => `<li>${esc(w.species)} <span class="muted">가중치 ${pct1(w.weight)} · 최선 ${esc(w.best_answer)} ${w.best_score.toFixed(2)}</span></li>`).join("")}</ul>`
+            : `<p class="muted">출현 상위 위협 중 팀에서 가장 나은 답도 불리한 상대는 없습니다.</p>`}
+          ${r.replacements.length ? `<p><strong>교체 후보</strong></p><ul class="plain">${r.replacements.map((x) => `<li>${esc(x.out)} → ${esc(x.line_ko)} <span class="muted">(점수 ${x.score_delta >= 0 ? "+" : ""}${x.score_delta.toFixed(3)})</span></li>`).join("")}</ul>` : ""}
+        </div>
+      </div>
+    </div>
+    <div class="panel"><div class="panel-head"><h2>Showdown 형식</h2><button class="btn" id="rec-copy">복사</button></div>
+      <pre class="tail" id="rec-export">${esc(r.export)}</pre>
+      <p class="muted">${r.notes.map(esc).join("<br>")} · 계산 ${r.elapsed_s}초, 팀 평가 ${r.evaluations}회</p></div>`;
+}
+$("#rec-run").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+  $("#rec-result").innerHTML = `<div class="panel muted">계산하는 중입니다…</div>`;
+  try {
+    const r = await api("/api/team/recommend", {
+      fix: $("#rec-fix").value, exclude: $("#rec-exclude").value, seed: $("#rec-seed").value,
+      validate: Number($("#rec-validate").value), save: $("#rec-save").value,
+    });
+    $("#rec-result").innerHTML = recHtml(r);
+    $("#rec-copy").addEventListener("click", () => navigator.clipboard.writeText(r.export).then(() => toast("복사했습니다.")));
+    if (r.saved_as) loadTeams();
+  } catch (e) {
+    $("#rec-result").innerHTML = "";
+    throw e;
+  }
+}));
+
 // ---------------- 공식 공지 ----------------
 async function loadNews() {
   try {
