@@ -177,6 +177,14 @@ CREATE TABLE IF NOT EXISTS set_archetypes (
   source_snapshot_date TEXT              -- 보정에 쓴 최신 통계 날짜
 );
 CREATE INDEX IF NOT EXISTS idx_set_archetypes_species ON set_archetypes (regulation, species_id);
+CREATE TABLE IF NOT EXISTS matchup_cache (
+  static_version INTEGER NOT NULL,       -- 캐시 키에 정적 데이터 버전을 넣어 오래된 값이 섞이지 않게 한다
+  key_a TEXT NOT NULL,
+  key_b TEXT NOT NULL,
+  score REAL NOT NULL,                   -- A 관점 0~1 (빠른 근사)
+  detail_json TEXT,
+  PRIMARY KEY (static_version, key_a, key_b)
+);
 CREATE TABLE IF NOT EXISTS my_teams (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,

@@ -4,6 +4,7 @@
     uv run pokechamp update-static [--yes] [--dry-run] [--force]
     uv run pokechamp update-stats [--force] [--backfill N]
     uv run pokechamp build-sets [--check N]
+    uv run pokechamp matchup <포켓몬A> <포켓몬B> [--sim N]
     uv run pokechamp rollback-static <버전 id>
     uv run pokechamp web
 """
@@ -147,6 +148,51 @@ def cmd_build_sets(args: argparse.Namespace) -> int:
     return 0 if c["violations"] == 0 else 1
 
 
+def _find_species(conn, name: str) -> str:
+    from pokechamp.data.db import active_version
+    from pokechamp.data.static.names import to_id
+    v = active_version(conn)
+    q = name.strip()
+    rows = conn.execute("SELECT id, name_ko, name_en FROM species WHERE version_id=? AND is_mega=0", (v["id"],)).fetchall()
+    for r in rows:
+        if r["id"] == to_id(q) or (r["name_ko"] or "").replace(" ", "") == q.replace(" ", ""):
+            return r["id"]
+    hits = [r["id"] for r in rows if q in (r["name_ko"] or "") or to_id(q) in r["id"]]
+    if len(hits) == 1:
+        return hits[0]
+    raise SystemExit(f"포켓몬을 찾지 못했다: {name}" + (f" (후보: {', '.join(hits[:8])})" if hits else ""))
+
+
+def cmd_matchup(args: argparse.Namespace) -> int:
+    from pokechamp.matchup.candidates import candidates
+    from pokechamp.matchup.fast import MatchupCache
+    from pokechamp.matchup.sim import sim_matchup
+    conn = connect()
+    a_id, b_id = _find_species(conn, args.a), _find_species(conn, args.b)
+    ca, cb = candidates(conn, a_id, args.top), candidates(conn, b_id, args.top)
+    if not ca or not cb:
+        print("세트 원형이 없다. `pokechamp build-sets`를 먼저 실행하세요.")
+        return 1
+    cache = MatchupCache(conn)
+    scores = cache.scores([((x.set, x.mega), (y.set, y.mega)) for x in ca for y in cb])
+    print(f"{a_id} 관점 1:1 점수 (빠른 근사, 0~1). 행={a_id} 세트, 열={b_id} 세트. 새로 계산 {cache.computed}쌍")
+    print(" " * 34 + "".join(f"{y.label[:22]:>24}" for y in cb))
+    k = 0
+    for x in ca:
+        row = f"{x.label[:30]:<30} {x.weight:>4.0%}"
+        for _ in cb:
+            row += f"{scores[k]:>24.2f}"
+            k += 1
+        print(row)
+    exp = sum(x.weight * y.weight * scores[i * len(cb) + j] for i, x in enumerate(ca) for j, y in enumerate(cb))
+    wsum = sum(x.weight for x in ca) * sum(y.weight for y in cb)
+    print(f"원형 가중 평균: {exp / wsum:.2f}")
+    if args.sim:
+        r = sim_matchup(ca[0].set, cb[0].set, reps=args.sim, seed=args.seed)
+        print(f"정밀 시뮬레이션 (최대 데미지 봇, 첫 세트끼리, {args.sim}판, 시드 {args.seed}): {a_id} 승률 {r['win_rate']:.2f}")
+    return 0
+
+
 def cmd_rollback_static(args: argparse.Namespace) -> int:
     from pokechamp.data.static.update import activate_version
     conn = connect()
@@ -176,6 +222,13 @@ def main(argv: list[str] | None = None) -> int:
     bs = sub.add_parser("build-sets", help="세트 원형(결합 분포)을 다시 만들고 규칙 위반을 검사")
     bs.add_argument("--check", type=int, default=10_000, help="검사할 샘플 세트 수")
     bs.set_defaults(fn=cmd_build_sets)
+    mu = sub.add_parser("matchup", help="두 포켓몬의 대표 세트끼리 1:1 상성 (빠른 근사, 선택적으로 정밀 시뮬레이션)")
+    mu.add_argument("a")
+    mu.add_argument("b")
+    mu.add_argument("--top", type=int, default=3, help="포켓몬당 원형 상위 몇 개")
+    mu.add_argument("--sim", type=int, default=0, help="첫 세트끼리 정밀 시뮬레이션 판 수")
+    mu.add_argument("--seed", default="cli")
+    mu.set_defaults(fn=cmd_matchup)
     rb = sub.add_parser("rollback-static", help="이전 정적 데이터 버전으로 되돌리기")
     rb.add_argument("version", type=int)
     rb.set_defaults(fn=cmd_rollback_static)

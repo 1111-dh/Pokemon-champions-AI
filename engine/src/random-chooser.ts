@@ -63,3 +63,36 @@ export function randomChoice(request: any, rng: Rng, megaRate = 0.5): string | n
 }
 
 export { PS };
+
+/**
+ * 최대 데미지 봇 (기준선 정책, PROJECT_PLAN 6절 정밀 시뮬레이션): 현재 상대에게 기대 데미지가 가장 큰 기술을 고른다.
+ * 메가진화가 가능하면 첫 공격 턴에 한다. 공격 기술이 없거나 모두 막혀 있으면 무작위로 고른다.
+ */
+export function maxDamageChoice(battle: any, side: any, rng: Rng): string | null {
+  const request = side.activeRequest;
+  if (!request || request.wait || request.teamPreview || request.forceSwitch) return randomChoice(request, rng, 0);
+  const me = side.active[0];
+  const foe = side.foe.active[0];
+  const active = request.active[0];
+  if (!me || !foe || foe.fainted) return randomChoice(request, rng, 0);
+  let best: { idx: number; score: number } = { idx: -1, score: 0 };
+  const saved = battle.randomizer;
+  const tr = battle.trunc;
+  battle.randomizer = (base: number) => tr(tr(base * 92) / 100);   // 평균에 가까운 난수
+  try {
+    active.moves.forEach((mv: any, i: number) => {
+      if (mv.disabled) return;
+      const move = battle.dex.getActiveMove(mv.id);
+      if (move.category === 'Status') return;
+      move.willCrit = false;
+      const dmg = battle.actions.getDamage(me, foe, move, true);
+      const acc = move.accuracy === true ? 1 : move.accuracy / 100;
+      const score = (typeof dmg === 'number' ? dmg : 0) * acc + rng() * 1e-6;
+      if (score > best.score) best = { idx: i, score };
+    });
+  } finally {
+    battle.randomizer = saved;
+  }
+  if (best.idx < 0) return randomChoice(request, rng, 0);
+  return `move ${best.idx + 1}${active.canMegaEvo ? ' mega' : ''}`;
+}
