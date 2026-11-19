@@ -375,6 +375,26 @@ def cmd_validate_select(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_battle_check(args: argparse.Namespace) -> int:
+    import json
+    from pokechamp.engine_client import EngineClient
+    from pokechamp.battle.selfcheck import run
+    r = run(connect(), EngineClient(), args.n, args.seed, mode=args.mode)
+    st = r["stats"]
+    bad = {k: v for k, v in st.items() if k.startswith("state_") or k in ("parse_error", "roundtrip")}
+    ill = {k: v for k, v in st.items() if k.startswith("illusion_state_")}
+    print(f"입력 파서·상태 추적 자동 검증 ({args.mode}): 배틀 {st.get('battles', 0)}판, 결정 시점 {st.get('steps', 0):,}개, "
+          f"사건 {st.get('events', 0):,}개, 시드 {args.seed}")
+    print(f"- 파싱 오류 {st.get('parse_error', 0)}, 왕복 불일치 {st.get('roundtrip', 0)}, "
+          f"상태 불일치 {sum(v for k, v in bad.items() if k.startswith('state_'))} (일루전 판 {st.get('illusion_battles', 0)}개 제외)")
+    if ill:
+        print(f"- 일루전 판의 상태 불일치 {sum(ill.values())} (겉보기와 실제가 달라 추적할 수 없음, KNOWN_GAPS)")
+    print(f"- 경고 {st.get('warning', 0)} (일루전 판 {st.get('illusion_warning', 0)})")
+    if args.verbose:
+        print(json.dumps(r["examples"], ensure_ascii=False, indent=2))
+    return 0 if not bad else 1
+
+
 def cmd_rollback_static(args: argparse.Namespace) -> int:
     from pokechamp.data.static.update import activate_version
     conn = connect()
@@ -454,6 +474,13 @@ def main(argv: list[str] | None = None) -> int:
     vs.add_argument("--samples", type=int, default=16, help="--full-check에서 칸마다 판 수")
     vs.add_argument("--save-matrices", help="--full-check의 근사·정밀·홀드아웃 행렬을 이 경로(.npz)에 저장")
     vs.set_defaults(fn=cmd_validate_select)
+    bc = sub.add_parser("battle-check", help="배틀 입력 파서와 상태 추적을 엔진 배틀로 자동 검증")
+    bc.add_argument("--n", type=int, default=100, help="배틀 수")
+    bc.add_argument("--mode", choices=["full", "sparse"], default="sparse",
+                    help="full: 관찰 가능한 사건을 모두 입력, sparse: 사용자처럼 최소 입력(HP는 마지막 값만)")
+    bc.add_argument("--seed", default="battle-check")
+    bc.add_argument("--verbose", action="store_true", help="불일치 예시 출력")
+    bc.set_defaults(fn=cmd_battle_check)
     rb = sub.add_parser("rollback-static", help="이전 정적 데이터 버전으로 되돌리기")
     rb.add_argument("version", type=int)
     rb.set_defaults(fn=cmd_rollback_static)
