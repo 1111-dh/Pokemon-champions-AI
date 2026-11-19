@@ -17,20 +17,18 @@ _last_request: dict[str, float] = {}
 
 
 def fetch(url: str, cache: Path | None = None, max_age_s: float = 0, force: bool = False,
-          timeout: float = 30) -> bytes:
+          timeout: float = 30, min_interval_s: float = MIN_INTERVAL_S) -> bytes:
     """URL 내용을 돌려준다. cache가 있고 max_age_s 안이면 캐시를 쓴다."""
     if cache and not force and cache.exists() and time.time() - cache.stat().st_mtime < max_age_s:
         return cache.read_bytes()
     host = urllib.parse.urlparse(url).netloc
-    wait = MIN_INTERVAL_S - (time.monotonic() - _last_request.get(host, -1e9))
+    wait = min_interval_s - (time.monotonic() - _last_request.get(host, -1e9))
     if wait > 0:
         time.sleep(wait)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read()
-    finally:
-        _last_request[host] = time.monotonic()
+    _last_request[host] = time.monotonic()  # 간격은 요청 시작 시각 사이로 잰다 (동시 요청은 하지 않는다)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read()
     if cache:
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_bytes(body)

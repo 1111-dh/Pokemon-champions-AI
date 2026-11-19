@@ -23,4 +23,5 @@ def status_data(conn: sqlite3.Connection) -> dict[str, Any]:
             "counts": counts,
         }
     log = [dict(r) for r in conn.execute("SELECT * FROM update_log ORDER BY id DESC LIMIT 10")]
-    return {"static": static, "stats": None, "update_log": log}
+    from pokechamp.data.stats.update import stats_status
+    return {"static": static, "stats": stats_status(conn), "update_log": log}

@@ -1,0 +1,20 @@
+# pokechamp 설정. 사용자가 정할 튜닝 값은 여기에 둔다 (CLAUDE.md "평가와 재현성").
+
+[stats]
+# 처음 실행할 때 받아 올 일별 스냅샷 수 (출처가 주는 최대 31일)
+backfill_days = 7
+# 최신 데이터가 이 일수보다 오래되면 경고한다
+max_age_days = 2
+# 출처가 붙인 시즌 표기와 공식 시즌(데이터 날짜 기준)이 다를 때:
+#   "date"   = 날짜 기준 공식 시즌을 쓰고 저장한다 (표기 불일치는 스냅샷 메모와 status에 남긴다)
+#   "strict" = 저장하지 않는다
+season_label_policy = "date"
+# 같은 출처에 대한 요청 간격(초)과 응답 캐시 시간(시간)
+request_interval_s = 0.5
+cache_hours = 6
+# 출처 하나의 전체 수집 시간 상한(초). 넘으면 그때까지 받은 것만 저장한다
+source_timeout_s = 600
+
+[stats.sources.championsbattledata]
+enabled = true
+format = "Singles"

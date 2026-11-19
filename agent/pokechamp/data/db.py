@@ -96,6 +96,57 @@ CREATE TABLE IF NOT EXISTS mega_forms (
   stone_item_id TEXT NOT NULL,
   PRIMARY KEY (version_id, mega_species_id)
 );
+CREATE TABLE IF NOT EXISTS snapshots (
+  id INTEGER PRIMARY KEY,
+  captured_at TEXT NOT NULL,           -- 우리가 수집한 시각 (UTC ISO)
+  source TEXT NOT NULL,
+  format TEXT NOT NULL,                -- 'singles'
+  regulation TEXT NOT NULL,            -- 데이터 날짜 기준 공식 레귤레이션
+  official_season TEXT,                -- 데이터 날짜 기준 공식 시즌 (공식 공지 달력)
+  page_season TEXT,                    -- 출처가 붙인 시즌 표기 그대로
+  page_updated_at TEXT NOT NULL,       -- 출처 데이터의 날짜 (YYYY-MM-DD)
+  requested_season TEXT,
+  verified INTEGER NOT NULL,           -- 출처 표기와 공식 시즌이 일치하는가
+  note TEXT,
+  UNIQUE (source, format, page_updated_at)
+);
+CREATE TABLE IF NOT EXISTS usage_species (
+  snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+  species_id TEXT NOT NULL,
+  rank_position INTEGER,
+  usage_rate REAL,
+  PRIMARY KEY (snapshot_id, species_id)
+);
+CREATE TABLE IF NOT EXISTS usage_moves (
+  snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+  species_id TEXT NOT NULL, move_id TEXT NOT NULL, rank INTEGER, rate REAL,
+  PRIMARY KEY (snapshot_id, species_id, move_id)
+);
+CREATE TABLE IF NOT EXISTS usage_items (
+  snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+  species_id TEXT NOT NULL, item_id TEXT NOT NULL, rank INTEGER, rate REAL,
+  PRIMARY KEY (snapshot_id, species_id, item_id)
+);
+CREATE TABLE IF NOT EXISTS usage_abilities (
+  snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+  species_id TEXT NOT NULL, ability_id TEXT NOT NULL, rank INTEGER, rate REAL,
+  PRIMARY KEY (snapshot_id, species_id, ability_id)
+);
+CREATE TABLE IF NOT EXISTS usage_natures (
+  snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+  species_id TEXT NOT NULL, nature TEXT NOT NULL, rank INTEGER, rate REAL,
+  PRIMARY KEY (snapshot_id, species_id, nature)
+);
+CREATE TABLE IF NOT EXISTS usage_spreads (
+  snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+  species_id TEXT NOT NULL, rank INTEGER NOT NULL, spread_json TEXT NOT NULL, rate REAL,
+  PRIMARY KEY (snapshot_id, species_id, rank)
+);
+CREATE TABLE IF NOT EXISTS usage_teammates (
+  snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+  species_id TEXT NOT NULL, mate_id TEXT NOT NULL, rank INTEGER, rate REAL,
+  PRIMARY KEY (snapshot_id, species_id, mate_id)
+);
 CREATE TABLE IF NOT EXISTS my_teams (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,

@@ -127,6 +127,16 @@ function renderStage() {
     <div class="criteria"><strong>완료 기준</strong> ${esc(s.criteria)}</div>`;
 }
 
+function statsLines(stats) {
+  if (!stats || !stats.length) {
+    return `<span class="k">통계 스냅샷</span><span>없음. 배틀 전에 터미널에서 <code>uv run pokechamp update-stats</code>를 실행하세요.</span>`;
+  }
+  return stats.map((x) => `<span class="k">통계 (${esc(x.source)})</span><span>데이터 ${esc(x.latest_date)}
+    (${x.age_days === 0 ? "오늘" : `${x.age_days}일 전`}), 시즌 ${esc(x.official_season)}, 스냅샷 ${x.snapshots}개
+    ${x.verified ? "" : `<br><span class="muted">출처는 ${esc(x.page_season)}로 표기, 날짜 기준 공식 시즌으로 판정</span>`}
+    ${x.age_days >= 2 ? `<br><span class="state-badge warn">오래됨, update-stats 권장</span>` : ""}</span>`).join("");
+}
+
 async function loadStatus() {
   try {
     const st = await api("/api/status");
@@ -136,7 +146,7 @@ async function loadStatus() {
       <span class="k">레귤레이션 기간</span><span>${fmtTs(s.regulation_starts_at)} ~ ${fmtTs(s.regulation_ends_at)}</span>
       <span class="k">수록</span><span>포켓몬 ${s.counts.species} (메가 ${s.counts.mega_forms}), 기술 ${s.counts.moves}, 도구 ${s.counts.items}, 특성 ${s.counts.abilities}</span>
       <span class="k">Showdown</span><span><code>${esc(s.showdown_commit.slice(0, 7))}</code></span>
-      <span class="k">통계 스냅샷</span><span>아직 없음 (update-stats 구현 전)</span>`
+      ${statsLines(st.stats)}`
       : `<span class="k">정적 데이터</span><span>없음. 터미널에서 <code>uv run pokechamp update-static</code>을 실행하세요.</span>`;
   } catch (e) { $("#status-box").textContent = e.message; }
 }
