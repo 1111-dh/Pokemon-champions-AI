@@ -1,0 +1,16 @@
+[project]
+name = "pokechamp"
+version = "0.0.0"
+description = "포켓몬 챔피언스 싱글배틀 보조 AI 에이전트 (데이터, 탐색, CLI)"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
