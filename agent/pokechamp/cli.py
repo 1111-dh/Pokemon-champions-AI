@@ -2,6 +2,7 @@
 
     uv run pokechamp status
     uv run pokechamp update-static [--yes] [--dry-run] [--force]
+    uv run pokechamp update-stats [--force] [--backfill N]
     uv run pokechamp rollback-static <버전 id>
     uv run pokechamp web
 """
@@ -44,7 +45,14 @@ def cmd_status(args: argparse.Namespace) -> int:
         if st["regulation_ended"]:
             print("  ⚠️ 이 레귤레이션은 끝났다. 새 레귤레이션 공지를 확인하고 `pokechamp update-static` 실행을 권장한다.")
     print("[통계 스냅샷]")
-    print("  없음. (update-stats는 아직 구현 전)")
+    if not d["stats"]:
+        print("  없음. 배틀 전에 `pokechamp update-stats`를 실행하세요.")
+    for x in d["stats"]:
+        flag = "" if x["verified"] else f" (출처 표기 {x['page_season']}, 날짜 기준으로 판정)"
+        print(f"  {x['source']} {x['format']}: 데이터 {x['latest_date']} ({x['age_days']}일 전) · 시즌 {x['official_season']}"
+              f" · 레귤레이션 {x['regulation']} · 스냅샷 {x['snapshots']}개{flag}")
+        if x["age_days"] >= 2:
+            print(f"  ⚠️ 통계가 {x['age_days']}일 전 것이다. `pokechamp update-stats` 실행을 권장한다.")
     print("[최근 갱신 기록]")
     for r in d["update_log"][:5]:
         print(f"  {r['ran_at']} {r['kind']} {r['status']} {r['duration_s']}s {r['note'] or ''}")
@@ -88,6 +96,35 @@ def cmd_update_static(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_update_stats(args: argparse.Namespace) -> int:
+    from pokechamp.data.stats.update import run_update_stats
+    conn = connect()
+    last = {}
+
+    def progress(src: str, i: int, n: int) -> None:
+        if i == n or i - last.get(src, 0) >= 50:
+            last[src] = i
+            print(f"  {src}: {i}/{n}")
+
+    print("통계를 수집하는 중… (출처마다 요청 간격을 둔다)")
+    try:
+        reports = run_update_stats(conn, force=args.force, backfill=args.backfill, progress=progress)
+    except Exception as e:  # noqa: BLE001
+        print(f"실패: {e}", file=sys.stderr)
+        return 1
+    for r in reports:
+        print(f"[{r.source}] {r.status} · {r.seconds}초 · 최신 데이터 {r.latest_date or '-'} · 저장 {len(r.stored)}일 {', '.join(r.stored)}")
+        for w in r.warnings:
+            print(f"  ⚠️ {w}")
+        for e in r.errors[:10]:
+            print(f"  ✖ {e}")
+        if len(r.errors) > 10:
+            print(f"  … 오류 {len(r.errors) - 10}건 더")
+        if r.skipped:
+            print(f"  건너뜀 {len(r.skipped)}건: {r.skipped[0]}{' …' if len(r.skipped) > 1 else ''}")
+    return 0 if all(r.status != "failed" for r in reports) else 1
+
+
 def cmd_rollback_static(args: argparse.Namespace) -> int:
     from pokechamp.data.static.update import activate_version
     conn = connect()
@@ -110,6 +147,10 @@ def main(argv: list[str] | None = None) -> int:
     us.add_argument("--dry-run", action="store_true", help="차이 목록만 보여 주고 적용하지 않음")
     us.add_argument("--force", action="store_true", help="캐시를 무시하고 다시 받음")
     us.set_defaults(fn=cmd_update_static)
+    ust = sub.add_parser("update-stats", help="통계 스냅샷 수집 (배틀 전에 직접 실행)")
+    ust.add_argument("--force", action="store_true", help="캐시를 무시하고, 이미 저장한 날짜도 다시 받아 교체")
+    ust.add_argument("--backfill", type=int, help="처음 실행 시 받아 올 일별 스냅샷 수 (기본은 설정값)")
+    ust.set_defaults(fn=cmd_update_stats)
     rb = sub.add_parser("rollback-static", help="이전 정적 데이터 버전으로 되돌리기")
     rb.add_argument("version", type=int)
     rb.set_defaults(fn=cmd_rollback_static)

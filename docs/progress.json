@@ -33,7 +33,7 @@
     {
       "id": 1,
       "title": "허용 목록, 정적 데이터, 통계 수집",
-      "status": "in_progress",
+      "status": "done",
       "criteria": "스냅샷이 쌓이고, 시즌이 다른 페이지는 거부되고, 자동 실행 코드가 없음",
       "items": [
         {
@@ -57,15 +57,15 @@
           "done": true
         },
         {
-          "text": "update-stats (출처 1~2곳, 시즌·갱신일 검증, 값 단위 출처 기록)",
-          "done": false
+          "text": "update-stats (championsbattledata, 날짜 기준 시즌 검증, 값 단위 출처 기록)",
+          "done": true
         }
       ]
     },
     {
       "id": 2,
       "title": "사전확률, 세트 원형, 데미지, 상성",
-      "status": "todo",
+      "status": "in_progress",
       "criteria": "인게임 데미지 사례 일치, 샘플 1만 개에 규칙 위반 세트 0개",
       "items": []
     },
