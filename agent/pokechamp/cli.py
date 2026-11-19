@@ -317,6 +317,64 @@ def cmd_recommend_team(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_select(args: argparse.Namespace) -> int:
+    import json
+    from pokechamp.select.recommend import SelectError, Selector, parse_opponents
+    from pokechamp.select.report import text_report
+    from pokechamp.teams.store import load_team
+    conn = connect()
+    try:
+        t = load_team(conn, args.team)
+        opp, notes = parse_opponents(conn, args.opp)
+        log = (lambda s: None) if args.json else (lambda s: print(s, file=sys.stderr, flush=True))
+        sel = Selector(conn, log=log)
+        r = sel.run(t["team"], opp, seed=args.seed, budget_s=args.budget, team_problems=t["problems"], max_games=args.games)
+    except (SelectError, ValueError) as e:
+        print(e)
+        return 1
+    r["warnings"] = notes + r["warnings"]
+    if any(s.get("filled") for s in t["team"]):
+        r["warnings"].append("내 팀에 통계 기본값으로 채운 항목이 있다 (teams show로 확인)")
+    if args.json:
+        print(json.dumps(r, ensure_ascii=False, indent=2, default=float))
+    else:
+        print(f"내 팀: {args.team} ({t['source']})")
+        print(text_report(r, show_matrix=args.matrix))
+    return 0
+
+
+def cmd_validate_select(args: argparse.Namespace) -> int:
+    import json
+    from pokechamp.select.recommend import SelectError, Selector, parse_opponents
+    from pokechamp.select.validate import full_vs_oracle, validate_selection
+    from pokechamp.teambuild.validate import fmt
+    from pokechamp.teams.store import load_team
+    conn = connect()
+    log = lambda s: print(s, file=sys.stderr, flush=True)   # noqa: E731
+    try:
+        t = load_team(conn, args.team)
+        sel = Selector(conn, log=lambda s: None)
+        seed = args.seed or str(sel.cfg["seed"])
+        if args.full_check:
+            opp, _ = parse_opponents(conn, args.full_check)
+            r = full_vs_oracle(sel, t["team"], opp, seed, args.samples, log, save_path=args.save_matrices)
+            print(json.dumps(r, ensure_ascii=False, indent=2))
+            return 0
+        r = validate_selection(sel, t["team"], args.n, seed, args.games, log)
+    except (SelectError, ValueError) as e:
+        print(e)
+        return 1
+    d = r["diff"]
+    print(f"선출 추천 검증 · 팀 {args.team} ({t['source']}) · 상대 {r['opponents']}팀 · 추천 예산 {r['max_games']}판 · 시드 {r['seed']}")
+    print(f"  ({r['policy']})")
+    print(f"- 추천 선출: {fmt(r['recommended'])}")
+    print(f"- 무작위 선출: {fmt(r['random'])}")
+    if d.get("diff") is not None:
+        print(f"- 차이: {d['diff']:+.1%} (95% 구간 {d['lo']:+.1%}~{d['hi']:+.1%}, 짝 {d['pairs']:,}개)")
+    print(f"- 추천 중 더블 오라클이 수렴한 비율 {r['converged_share']:.0%}, {r['seconds']}초")
+    return 0
+
+
 def cmd_rollback_static(args: argparse.Namespace) -> int:
     from pokechamp.data.static.update import activate_version
     conn = connect()
@@ -376,6 +434,24 @@ def main(argv: list[str] | None = None) -> int:
     rt.add_argument("--replace", action="store_true", help="같은 이름의 팀이 있으면 덮어쓰기")
     rt.add_argument("--json", action="store_true", help="JSON으로 출력")
     rt.set_defaults(fn=cmd_recommend_team)
+    se = sub.add_parser("select", help="선출 추천: 상대 6마리를 보고 내 선출 3마리와 선봉을 확률로 추천")
+    se.add_argument("--team", required=True, help="저장한 내 팀 이름 (import-team 또는 recommend-team --save)")
+    se.add_argument("--opp", required=True, help='상대 6마리 (쉼표로 구분, 예: "한카리아스, 누리레느, 하마돈, 브리두라스, 따라큐, 리자몽")')
+    se.add_argument("--seed", help="시드 (기본은 설정값. 시간 예산은 처리 속도에 따라 결과가 조금 달라질 수 있어 재현하려면 --games를 쓴다)")
+    se.add_argument("--budget", type=float, help="시간 예산(초, 기본은 설정값 20초)")
+    se.add_argument("--games", type=int, help="시간 대신 3:3 시뮬레이션 판 수로 예산을 정함 (같은 시드면 같은 결과, 재현용)")
+    se.add_argument("--matrix", action="store_true", help="후보 보수 행렬도 출력")
+    se.add_argument("--json", action="store_true", help="JSON으로 출력")
+    se.set_defaults(fn=cmd_select)
+    vs = sub.add_parser("validate-select", help="선출 추천 검증: 무작위 선출 대비 승률, 또는 전체 계산과 더블 오라클 비교")
+    vs.add_argument("--team", required=True, help="저장한 내 팀 이름")
+    vs.add_argument("--n", type=int, default=300, help="상대 팀 수 (짝 하나 = 진영을 바꾼 두 판, 조건마다)")
+    vs.add_argument("--games", type=int, default=500, help="추천 한 번의 3:3 시뮬레이션 판 수 예산")
+    vs.add_argument("--seed", help="시드")
+    vs.add_argument("--full-check", metavar="상대6마리", help="이 상대에 대해 전체 정밀 계산과 더블 오라클의 균형 값을 비교")
+    vs.add_argument("--samples", type=int, default=16, help="--full-check에서 칸마다 판 수")
+    vs.add_argument("--save-matrices", help="--full-check의 근사·정밀·홀드아웃 행렬을 이 경로(.npz)에 저장")
+    vs.set_defaults(fn=cmd_validate_select)
     rb = sub.add_parser("rollback-static", help="이전 정적 데이터 버전으로 되돌리기")
     rb.add_argument("version", type=int)
     rb.set_defaults(fn=cmd_rollback_static)

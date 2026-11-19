@@ -56,7 +56,7 @@ tests/
 - 처음 받았을 때: `git submodule update --init --depth 1` → `cd engine && npm install && npm run setup:showdown` → `cd agent && uv sync`
 - 엔진(`engine/`, 먼저 `nvm use`): `npm run server`(127.0.0.1:8787), `npm test`, `npm run typecheck`, `npm run selfplay -- 1000 stage0`, `npm run verify`
 - 에이전트(`agent/`): `uv run pytest`. 엔진 통합 테스트는 서버가 떠 있을 때만 돈다.
-- CLI(`agent/`): `uv run pokechamp status`, `uv run pokechamp update-static [--dry-run|--yes]`, `uv run pokechamp update-stats [--force]`, `uv run pokechamp build-sets`, `uv run pokechamp matchup <A> <B>`, `uv run pokechamp import-team <이름>`, `uv run pokechamp teams`, `uv run pokechamp recommend-team [--fix 이름] [--exclude 이름] [--seed] [--validate N] [--save 이름]`, `uv run pokechamp rollback-static <버전>`, `uv run pokechamp web`(웹 화면 127.0.0.1:8790, 엔진 서버도 함께 띄움). DB는 `data/db/pokechamp.sqlite`(커밋 안 함), 튜닝 값은 `config/pokechamp.toml`이고, 한국어 이름 보충과 약칭은 `data/aliases.csv`에 둔다.
+- CLI(`agent/`): `uv run pokechamp status`, `uv run pokechamp update-static [--dry-run|--yes]`, `uv run pokechamp update-stats [--force]`, `uv run pokechamp build-sets`, `uv run pokechamp matchup <A> <B>`, `uv run pokechamp import-team <이름>`, `uv run pokechamp teams`, `uv run pokechamp recommend-team [--fix 이름] [--exclude 이름] [--seed] [--validate N] [--save 이름]`, `uv run pokechamp select --team <팀> --opp "상대 6마리" [--budget 초|--games N] [--matrix]`, `uv run pokechamp validate-select --team <팀> [--n N --games N | --full-check "상대 6마리"]`, `uv run pokechamp rollback-static <버전>`, `uv run pokechamp web`(웹 화면 127.0.0.1:8790, 엔진 서버도 함께 띄움). DB는 `data/db/pokechamp.sqlite`(커밋 안 함), 튜닝 값은 `config/pokechamp.toml`이고, 한국어 이름 보충과 약칭은 `data/aliases.csv`에 둔다.
 - 엔진 API는 `/new_battle`, `/step`, `/legal_actions`, `/simulate`, `/validate_team`, `/random_team`, `/damage`, `/matchup_fast`이다. 모두 `{"batch": [...]}`를 받는다. 배틀 상태는 Showdown 직렬화 JSON을 그대로 주고받는다.
 
 ## 데이터 규칙
@@ -92,7 +92,7 @@ tests/
 
 - **1:1 상성**: 빠른 근사(n타 확정 + 선공 여부)로 모든 세트 쌍을 미리 계산해 캐시한다. 캐시 키에 정적 데이터 버전을 넣는다. 정밀 계산은 엔진 시뮬레이션으로 한다.
 - **파티 점수**: `Score = E[V] − α(E[V] − CVaR10%[V]) − β·SD_시나리오`. V는 선출 게임의 내시 균형 값이다. 빔 서치로 채운 뒤 국소 탐색으로 다듬는다.
-- **선출**: 보수 행렬(최대 60×60)을 **더블 오라클**로 필요한 칸만 정밀 계산하고 `linprog`로 균형을 푼다. 출력은 균형 해와 상대 모델 최선 응수의 가중 평균이다.
+- **선출**: 보수 행렬(최대 60×60)을 **더블 오라클**로 필요한 칸만 정밀 계산(엔진 3:3)하고 `linprog`로 균형을 푼다. 근사로 응수가 없어도 탐색 확인을 거친 뒤 수렴으로 보고, 최종 균형은 정밀 계산한 내 선출 × 상대 선출 전체(후보 밖은 보정 근사값)에서 푼다. 출력은 균형 해와 상대 모델 최선 응수의 가중 평균이다.
 - **기술 선택**: 파티클 믿음 상태(증거별 우도: 사용한 기술, 데미지, 행동 순서, 특성/도구 발동, 메가진화)를 쓴다.
   - 동시 행동 행렬을 깊이 제한으로 탐색하고 가치 함수로 끝을 추정한다. 종반은 전치표를 쓰며 끝까지 계산한다. 반복 심화로 턴당 시간 예산을 지킨다.
   - 모든 파티클의 가중치가 0이 되면 **입력 오류부터 사용자에게 확인**한다.

@@ -54,6 +54,7 @@ class App:
             "/api/team/validate": self.team_check,
             "/api/team/save": self.team_save,
             "/api/team/recommend": self.team_recommend,
+            "/api/select": self.select,
             "/api/team/random": lambda b: self.client.batch("/random_team", [{"seed": b.get("seed") or secrets.token_hex(4)}])[0]["result"],
             "/api/selfplay": self.selfplay,
             "/api/news/check": self.news_check,
@@ -176,6 +177,31 @@ class App:
             save_team(self.conn, name, r["team"], "recommended", valid, problems if valid is not None else [],
                       replace=bool(b.get("replace")))
             r["saved_as"] = name
+        return json.loads(json.dumps(r, default=float))
+
+    def select(self, b: dict) -> dict:
+        """선출 추천 (PROJECT_PLAN 8절). 내 저장 팀 + 상대 6마리 이름 → 선출 확률. 시간 예산(기본 20초) 안에서 끝난다."""
+        from pokechamp.select.recommend import SelectError, Selector, parse_opponents
+        from pokechamp.select.report import text_report
+        from pokechamp.teams.store import load_team
+
+        try:
+            t = load_team(self.conn, str(b.get("team") or ""))
+            opp, notes = parse_opponents(self.conn, str(b.get("opp") or "").replace("\n", ","))
+            budget = float(b["budget"]) if b.get("budget") else None
+            seed = str(b.get("seed")).strip() or None if b.get("seed") else None
+            r = Selector(self.conn, self.client).run(t["team"], opp, seed=seed, budget_s=budget, team_problems=t["problems"])
+        except SelectError as e:
+            raise ValueError(str(e)) from e
+        r["warnings"] = notes + r["warnings"]
+        if any(x.get("filled") for x in t["team"]):
+            r["warnings"].append("내 팀에 통계 기본값으로 채운 항목이 있다")
+        r["team"], r["team_source"] = t["name"], t["source"]
+        for p in r["picks"]:
+            p["sprites"] = [sprite_id(x) for x in p["member_species"]]
+        for o in r["opponent"]:
+            o["sprite"] = sprite_id(o["name_en"])
+        r["text"] = text_report(r, show_matrix=True)
         return json.loads(json.dumps(r, default=float))
 
     # ---------- 공식 공지 ----------
