@@ -5,6 +5,8 @@
     uv run pokechamp update-stats [--force] [--backfill N]
     uv run pokechamp build-sets [--check N]
     uv run pokechamp matchup <포켓몬A> <포켓몬B> [--sim N]
+    uv run pokechamp import-team <이름> [--file 파일] [--fill-defaults | --keep-empty]
+    uv run pokechamp teams [list | show <이름> | delete <이름>]
     uv run pokechamp rollback-static <버전 id>
     uv run pokechamp web
 """
@@ -193,6 +195,83 @@ def cmd_matchup(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_import_team(args: argparse.Namespace) -> int:
+    from pathlib import Path
+    from pokechamp.input.team_text import FIELD_KO, NameIndex, TeamParseError, parse_team
+    from pokechamp.teams.store import fill_defaults, save_team, validate
+    conn = connect()
+    if args.file:
+        text = Path(args.file).read_text(encoding="utf-8")
+    else:
+        if sys.stdin.isatty():
+            print("팀을 붙여 넣고 빈 줄 두 번 뒤 Ctrl+D (Windows는 Ctrl+Z, Enter)로 끝내세요.")
+        text = sys.stdin.read()
+    try:
+        sets = parse_team(text, NameIndex(conn))
+    except TeamParseError as e:
+        print(f"해석 실패:\n{e}", file=sys.stderr)
+        return 1
+    if len(sets) != 6:
+        print(f"⚠️ 포켓몬이 {len(sets)}마리다 (게임 규칙은 6마리). 그래도 저장한다.")
+    missing = [(p, p.missing) for p in sets if p.missing]
+    if missing:
+        print("빈 항목:")
+        for p, m in missing:
+            print(f"  {p.species}: {', '.join(FIELD_KO[f] for f in m)}")
+        choice = "fill" if args.fill_defaults else "keep" if args.keep_empty else None
+        if choice is None:
+            if args.file and sys.stdin.isatty():
+                ans = input("빈 항목을 최신 통계의 기본값으로 채울까요? [y=채움 / n=비워 둠 / q=취소] ").strip().lower()
+                choice = {"y": "fill", "n": "keep"}.get(ans, "quit")
+            else:
+                print("빈 항목을 어떻게 할지 정해 다시 실행하세요: --fill-defaults(통계 기본값으로 채움) 또는 --keep-empty(비워 둠)")
+                return 2
+        if choice == "quit":
+            print("취소했다.")
+            return 0
+        if choice == "fill":
+            for note in fill_defaults(conn, sets):
+                print(f"  채움 · {note}")
+    team = [p.to_set() for p in sets]
+    valid, problems = validate(team)
+    if valid is None:
+        print(f"⚠️ {problems[0]}")
+    elif valid:
+        print("검증: 규칙 통과")
+    else:
+        print(f"⚠️ 규칙 위반 {len(problems)}개 (경고만 하고 저장한다):")
+        for pr in problems:
+            print(f"  - {pr}")
+    tid = save_team(conn, args.name, team, "manual", valid, problems if valid is not None else [], replace=args.replace)
+    print(f"팀 '{args.name}'을(를) 저장했다 (id {tid}, 직접 입력).")
+    return 0
+
+
+def cmd_teams(args: argparse.Namespace) -> int:
+    from pokechamp.teams.store import delete_team, export_text, list_teams, load_team
+    conn = connect()
+    if args.action == "list":
+        teams = list_teams(conn)
+        if not teams:
+            print("저장된 팀이 없다. `pokechamp import-team <이름>`으로 넣으세요.")
+        for t in teams:
+            state = {None: "검증 안 함", 1: "규칙 통과", 0: f"위반 {len(t['problems'])}개"}[t["valid"]]
+            filled = sum(1 for s in t["team"] if s.get("filled"))
+            print(f"{t['name']:<20} {t['source']:<11} {state:<10} {', '.join(s['species'] for s in t['team'])}"
+                  + (f"  (기본값으로 채운 포켓몬 {filled})" if filled else ""))
+    elif args.action == "show":
+        t = load_team(conn, args.name)
+        print(export_text(t["team"]))
+        for s in t["team"]:
+            if s.get("filled"):
+                print(f"# {s['species']}: 통계 기본값으로 채운 항목 {', '.join(s['filled'])}")
+        for p in t["problems"]:
+            print(f"# 경고: {p}")
+    elif args.action == "delete":
+        print("삭제했다." if delete_team(conn, args.name) else "그런 팀이 없다.")
+    return 0
+
+
 def cmd_rollback_static(args: argparse.Namespace) -> int:
     from pokechamp.data.static.update import activate_version
     conn = connect()
@@ -229,6 +308,17 @@ def main(argv: list[str] | None = None) -> int:
     mu.add_argument("--sim", type=int, default=0, help="첫 세트끼리 정밀 시뮬레이션 판 수")
     mu.add_argument("--seed", default="cli")
     mu.set_defaults(fn=cmd_matchup)
+    it = sub.add_parser("import-team", help="내 팀 6마리 가져오기 (Showdown 형식, 한국어/영어)")
+    it.add_argument("name", help="저장할 팀 이름")
+    it.add_argument("--file", help="팀 텍스트 파일 (없으면 표준 입력)")
+    it.add_argument("--fill-defaults", action="store_true", help="빈 항목을 최신 통계 기본값으로 채움")
+    it.add_argument("--keep-empty", action="store_true", help="빈 항목을 비워 둔 채 저장")
+    it.add_argument("--replace", action="store_true", help="같은 이름의 팀을 덮어씀")
+    it.set_defaults(fn=cmd_import_team)
+    tm = sub.add_parser("teams", help="저장한 팀 목록, 보기, 삭제")
+    tm.add_argument("action", choices=["list", "show", "delete"], nargs="?", default="list")
+    tm.add_argument("name", nargs="?")
+    tm.set_defaults(fn=cmd_teams)
     rb = sub.add_parser("rollback-static", help="이전 정적 데이터 버전으로 되돌리기")
     rb.add_argument("version", type=int)
     rb.set_defaults(fn=cmd_rollback_static)
