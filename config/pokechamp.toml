@@ -74,3 +74,40 @@ local_search_rounds = 2
 # 균형 근사 반복 수 (탐색 중), 최종 출력은 선형계획으로 정확히 푼다
 nash_iterations = 300
 seed = 20261119
+
+[select]
+# 선출 추천 (PROJECT_PLAN 8절). 팀 프리뷰에서 추천이 나올 때까지의 시간 상한(초). 근사 행렬 계산을 포함한다
+time_budget_s = 20
+# 내 선출 3마리 중 메가스톤 소지자 최대 수 (사용자 운용 규칙, 5.1절)
+max_mega_in_pick = 1
+# 상대 세트 샘플 수: 상대 6마리의 세트를 원형 분포(결합 분포)에서 이만큼 뽑아 근사 행렬을 평균하고,
+# 정밀 칸 하나의 샘플 상한으로도 쓴다
+opponent_samples = 32
+# 정밀 칸을 처음 계산할 때와 정밀화할 때마다 더하는 샘플 수 (샘플 하나 = 3:3 시뮬레이션 한 판)
+precise_samples = 16
+# 근사 3:3 값 = (1 − 이 비율) × 선출 게임 값(teambuild.assignment_weight 사용) + 이 비율 × 선봉끼리 1:1 값
+lead_weight = 0.2
+# 더블 오라클: 처음 후보 선출 수(양쪽 각각), 한 번에 더할 최선 응수 수, 응수가 균형보다 이만큼 나아야 더한다
+# (정밀 칸이 칸당 16판이라 잡음이 크다. 0.01이면 예시 팀에서 수렴까지 40초, 0.02면 25초였고 답은 같았다)
+# (정밀 칸이 칸당 16판이라 잡음이 크다. 예시 팀에서 0.01이면 수렴까지 40초, 0.02면 25초였고 답은 같았다)
+initial_candidates = 4
+add_per_iteration = 2
+oracle_epsilon = 0.02
+# 탐색 확인: 근사로 더 나은 응수가 없을 때 근사 순위 상위의 미탐색 선출을 양쪽 이만큼 정밀 계산해 본다.
+# 넣은 선출이 균형에 안 들어오는 일이 probe_rounds번 이어지면 수렴으로 본다
+probe_candidates = 4
+probe_rounds = 2
+# 최종 균형: "rows_all" = 정밀 계산한 내 선출 × 상대 선출 전체(후보 밖은 보정 근사값), "candidates" = 후보 행 × 후보 열.
+# 작은 사례 두 개(전체 정밀 행렬과 홀드아웃 행렬로 비교, 3,000판 예산)에서 상대 최선 응수 기준 값이
+# rows_all 0.548·0.687, candidates 0.548·0.605였다 (docs/VERIFIED.md)
+final_solve = "rows_all"
+# 상대 모델: 최종 전략 = (1 − 이 비율) × 균형 해 + 이 비율 × 상대 모델에 대한 최선 응수 (8절 5번)
+opponent_model_mix = 0.3
+# 상대 모델 분포 ∝ Π(포켓몬 출현 가중치^지수) × exp(온도 × 상대 입장 근사 승률)
+opponent_model_temperature = 5.0
+opponent_usage_exponent = 1.0
+# 엔진 처리량 첫 추정치(판/초). 실행 중 실제 처리량으로 바꿔 가며 예산 안에 들어갈 판 수를 정한다
+games_per_second_estimate = 150
+# 출력에서 생략할 작은 선택 확률
+show_min_probability = 0.005
+seed = 20261119

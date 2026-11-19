@@ -304,3 +304,9 @@ button.mon-chip[aria-pressed="true"] { border-color: var(--blue); box-shadow: in
 .plain { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14px; }
 .warn-box { background: var(--amber-soft); }
 .warn-box p { margin: 0; }
+
+/* 선출 추천 */
+.bar { height: 6px; background: var(--line); border-radius: 3px; margin-top: 4px; min-width: 60px; }
+.bar span { display: block; height: 100%; background: var(--blue); border-radius: 3px; }
+.pick-mons { display: flex; gap: 2px; align-items: center; }
+.pick-mons .lead { outline: 2px solid var(--blue); border-radius: 6px; }

@@ -28,6 +28,7 @@
     <button role="tab" data-tab="progress" aria-selected="true">진행 현황</button>
     <button role="tab" data-tab="battle">배틀 해보기</button>
     <button role="tab" data-tab="recommend">파티 추천</button>
+    <button role="tab" data-tab="select">선출 추천</button>
     <button role="tab" data-tab="dex">도감</button>
     <button role="tab" data-tab="team">팀 검증</button>
     <button role="tab" data-tab="news">공식 공지</button>
@@ -133,6 +134,29 @@
         </div>
       </div>
       <div id="rec-result" class="stack"></div>
+    </section>
+
+    <section id="tab-select" class="tab-panel" role="tabpanel" hidden>
+      <div class="panel">
+        <div class="rec-form">
+          <label>내 팀 <select id="sel-team" class="input"><option value="">저장한 팀이 없습니다</option></select></label>
+          <label>상대 6마리 <input id="sel-opp" class="input" placeholder="예: 한카리아스, 누리레느, 하마돈, 브리두라스, 따라큐, 리자몽"></label>
+          <label>시드 <input id="sel-seed" class="input" placeholder="비우면 설정값"></label>
+          <label>시간 예산
+            <select id="sel-budget" class="input">
+              <option value="10">10초</option>
+              <option value="20" selected>20초 (기본)</option>
+              <option value="30">30초</option>
+              <option value="60">60초</option>
+            </select>
+          </label>
+        </div>
+        <div class="run-row">
+          <button class="btn btn-primary" id="sel-run">선출 추천받기</button>
+          <span class="muted">팀은 '팀 검증' 탭이나 파티 추천에서 저장합니다. 상대 이름은 한국어·영어 모두 됩니다. 계산하는 동안 다른 요청은 기다립니다.</span>
+        </div>
+      </div>
+      <div id="sel-result" class="stack"></div>
     </section>
 
     <!-- 도감 -->

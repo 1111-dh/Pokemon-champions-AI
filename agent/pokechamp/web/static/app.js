@@ -446,6 +446,75 @@ $("#rec-run").addEventListener("click", (ev) => withBusy(ev.currentTarget, async
   }
 }));
 
+// ---------------- 선출 추천 ----------------
+async function loadSelectTeams() {
+  try {
+    const teams = await api("/api/teams");
+    const cur = $("#sel-team").value;
+    $("#sel-team").innerHTML = teams.length
+      ? teams.map((t) => `<option value="${esc(t.name)}">${esc(t.name)} (${t.source === "manual" ? "직접 입력" : "추천"})</option>`).join("")
+      : `<option value="">저장한 팀이 없습니다</option>`;
+    if (cur && teams.some((t) => t.name === cur)) $("#sel-team").value = cur;
+  } catch (e) { toast(e.message); }
+}
+const pct0 = (x) => `${Math.round(x * 100)}%`;
+function selHtml(r) {
+  const m = r.matrix, o = r.oracle;
+  const opp = r.opponent.map((x) => `<li class="rec-mon">${sprite(x.sprite)}
+      <div><div class="nm">${esc(x.species)}</div>
+      <div class="muted">출전 ${pct0(x.bring_probability)}${x.mega_stone_probability ? ` · 메가스톤 ${pct0(x.mega_stone_probability)}` : ""}</div></div></li>`).join("");
+  const picks = r.picks.map((p) => `<tr>
+      <td><strong>${pct0(p.probability)}</strong><div class="bar"><span style="width:${(p.probability * 100).toFixed(1)}%"></span></div></td>
+      <td><div class="pick-mons">${p.sprites.map((sp, i) => sprite(sp, i === 0 ? "lead" : "")).join("")}</div>
+        <div>선봉 <strong>${esc(p.lead)}</strong> + ${esc(p.members.slice(1).join(", "))} <span class="muted">(슬롯 ${p.slots.join("·")})</span></div>
+        ${p.mega ? `<span class="state-badge">메가: ${esc(p.mega)}</span>` : ""}${p.opponent_model_best_response ? ` <span class="state-badge">상대 모델 최선 응수</span>` : ""}</td>
+      <td>${pct0(p.win_vs_equilibrium)} <span class="muted">/ ${pct0(p.win_vs_model)}</span></td>
+      <td class="muted">${p.strong.length ? `강함: ${esc(p.strong.join("·"))}` : ""}${p.weak.length ? `<br>불리: ${esc(p.weak.join("·"))}` : ""}</td></tr>`).join("");
+  const likely = r.opponent_likely_picks.map((x) => `<li>${pct0(x.probability)} · 선봉 ${esc(x.lead)} + ${esc(x.members.slice(1).join(", "))}</li>`).join("");
+  const budget = r.max_games != null ? `${r.max_games.toLocaleString()}판` : `${r.budget_s}초`;
+  return `
+    ${r.warnings.length ? `<div class="panel warn-box">${r.warnings.map((w) => `<p>${esc(w)}</p>`).join("")}</div>` : ""}
+    <div class="panel">
+      <div class="panel-head"><h2>추천 선출</h2><span class="muted">${esc(r.team)} · 시드 ${esc(r.seed)} · ${esc(r.freshness)}</span></div>
+      <p>이 확률대로 무작위로 고르세요. 전체 기대 승률 <strong>${pct1(r.expected_win_vs_equilibrium)}</strong> (상대가 균형으로 고를 때)
+        / ${pct1(r.expected_win_vs_model)} (상대 모델대로 고를 때).</p>
+      <table class="table"><thead><tr><th>확률</th><th>선출</th><th>예상 승률 <span class="muted">(균형 / 모델)</span></th><th>이유</th></tr></thead>
+        <tbody>${picks}</tbody></table>
+      <p class="muted">최종 확률 = ${pct0(1 - r.opponent_model_mix)} × 균형 해 + ${pct0(r.opponent_model_mix)} × 상대 모델 최선 응수.</p>
+    </div>
+    <div class="grid-2">
+      <div class="panel"><div class="panel-head"><h2>상대 6마리</h2></div><ul class="rec-list">${opp}</ul>
+        <p class="muted">출전 확률은 상대 균형 전략 기준, 메가스톤 확률은 세트 통계 기준입니다.</p></div>
+      <div class="stack">
+        <div class="panel"><div class="panel-head"><h2>상대 예상 선출</h2></div><ul class="plain">${likely || "<li class='muted'>-</li>"}</ul></div>
+        <div class="panel"><div class="panel-head"><h2>계산</h2></div>
+          <div class="kv">
+            <span class="k">시간</span><span>${r.elapsed_s}초 (예산 ${budget})</span>
+            <span class="k">3:3 시뮬레이션</span><span>${r.games.toLocaleString()}판${r.errors ? ` (오류 ${r.errors})` : ""}</span>
+            <span class="k">더블 오라클</span><span>${o.iterations}회 · ${o.converged ? "수렴" : "예산에서 멈춤 (수렴 전)"}</span>
+            <span class="k">보수 행렬</span><span>${m.size[0]}×${m.size[1]} 중 정밀 ${m.precise_cells}칸 (근사값만 ${pct0(m.approx_only_share)})</span>
+            <span class="k">후보</span><span>${m.candidates[0]}×${m.candidates[1]} · 정밀 칸 ${pct0(m.candidate_precise_share)}</span>
+            <span class="k">정밀값 비중</span><span>${pct0(m.weighted_precise_share)} <span class="muted">(균형 확률로 가중)</span></span>
+          </div>
+          <p class="muted">${esc(r.policy)}</p></div>
+      </div>
+    </div>
+    <details class="panel"><summary>글로 보기 (보수 행렬 포함)</summary><pre class="tail">${esc(r.text)}</pre></details>`;
+}
+$("#sel-run").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+  if (!$("#sel-team").value) { toast("먼저 팀을 저장하세요."); return; }
+  $("#sel-result").innerHTML = `<div class="panel muted">계산하는 중입니다… (최대 ${$("#sel-budget").value}초)</div>`;
+  try {
+    const r = await api("/api/select", { team: $("#sel-team").value, opp: $("#sel-opp").value, seed: $("#sel-seed").value,
+      budget: Number($("#sel-budget").value) });
+    $("#sel-result").innerHTML = selHtml(r);
+  } catch (e) {
+    $("#sel-result").innerHTML = "";
+    throw e;
+  }
+}));
+document.querySelector('.tabs button[data-tab="select"]').addEventListener("click", loadSelectTeams);
+
 // ---------------- 공식 공지 ----------------
 async function loadNews() {
   try {

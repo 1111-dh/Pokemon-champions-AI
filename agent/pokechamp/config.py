@@ -62,3 +62,15 @@ def teambuild_config() -> dict[str, Any]:
     for k, v in defaults.items():
         c.setdefault(k, v)
     return c
+
+
+def select_config() -> dict[str, Any]:
+    c = dict(load_config().get("select", {}))
+    defaults = {"time_budget_s": 20.0, "max_mega_in_pick": 1, "opponent_samples": 32, "precise_samples": 16,
+                "lead_weight": 0.2, "initial_candidates": 4, "add_per_iteration": 2, "oracle_epsilon": 0.02,
+                "probe_candidates": 4, "probe_rounds": 2, "final_solve": "rows_all",
+                "opponent_model_mix": 0.3, "opponent_model_temperature": 5.0, "opponent_usage_exponent": 1.0,
+                "games_per_second_estimate": 150.0, "show_min_probability": 0.005, "seed": 20261119}
+    for k, v in defaults.items():
+        c.setdefault(k, v)
+    return c
