@@ -2,7 +2,7 @@
 
 점수는 엔진 /matchup_fast가 계산한다 (서로 최고 기대 데미지 기술의 n타와 선공 여부, 등장 시 날씨·필드 반영, 대칭).
 캐시 규칙:
-- 캐시 키에 정적 데이터 버전을 넣는다. update-static은 캐시 전체를 지운다(data/static/update.py).
+- 캐시 키에 정적 데이터 버전과 근사 알고리즘 버전(ALGO_VERSION)을 넣는다. update-static은 캐시 전체를 지운다(data/static/update.py).
 - update-stats로 세트 후보가 바뀌면 새 세트의 키만 새로 계산되고 기존 값은 그대로 쓴다.
 - 사용자가 직접 넣은 세트도 같은 방식으로 필요할 때 계산해 캐시에 넣는다(사전 계산에 의존하지 않음).
 - 메가스톤을 든 세트는 메가 전과 후를 별도 키로 둔다.
@@ -20,6 +20,9 @@ from pokechamp.data.static.names import to_id
 from pokechamp.engine_client import EngineClient
 
 BATCH = 400
+# 빠른 근사 알고리즘 버전. engine/src/matchup.ts의 계산 방식을 바꾸면 올린다 (캐시 키에 들어가서 이전 값은 쓰이지 않는다).
+# 1: 최고 기술 n타 + 선공, 2: 턴 단위 HP 경주 (반동, 흡수, 랭크 변화, 위협, 띠·옹골참, 접촉 피해, 회복, 모래바람 등)
+ALGO_VERSION = 2
 
 
 def canonical(set_: dict[str, Any], mega: bool = False) -> dict[str, Any]:
@@ -30,7 +33,7 @@ def canonical(set_: dict[str, Any], mega: bool = False) -> dict[str, Any]:
 
 
 def set_key(set_: dict[str, Any], mega: bool = False) -> str:
-    return hashlib.sha1(json.dumps(canonical(set_, mega), sort_keys=True).encode()).hexdigest()[:20]
+    return hashlib.sha1(json.dumps({**canonical(set_, mega), "algo": ALGO_VERSION}, sort_keys=True).encode()).hexdigest()[:20]
 
 
 class MatchupCache:
@@ -45,14 +48,16 @@ class MatchupCache:
         """[((세트A, 메가A), (세트B, 메가B)), ...] → A 관점 점수 목록. 없는 쌍은 엔진 배치로 계산해 캐시에 넣는다."""
         keys = [(set_key(a, ma), set_key(b, mb)) for (a, ma), (b, mb) in pairs]
         have: dict[tuple[str, str], float] = {}
-        uniq = list({k for k in keys})
-        for i in range(0, len(uniq), 500):
-            chunk = uniq[i:i + 500]
-            q = " OR ".join("(key_a=? AND key_b=?)" for _ in chunk)
-            args = [x for k in chunk for x in k]
-            for r in self.conn.execute(f"SELECT key_a, key_b, score FROM matchup_cache WHERE static_version=? AND ({q})",
-                                       [self.version, *args]):
-                have[(r[0], r[1])] = r[2]
+        want = set(keys)
+        # key_a IN (...)로 묻는다 (기본 키 인덱스를 탄다). (key_a=? AND key_b=?)를 OR로 수백 개 묶으면 전체 스캔이 된다.
+        lefts = sorted({a for a, _ in want})
+        for i in range(0, len(lefts), 500):
+            chunk = lefts[i:i + 500]
+            q = ",".join("?" * len(chunk))
+            for r in self.conn.execute(f"SELECT key_a, key_b, score FROM matchup_cache WHERE static_version=? AND key_a IN ({q})",
+                                       [self.version, *chunk]):
+                if (r[0], r[1]) in want:
+                    have[(r[0], r[1])] = r[2]
         missing = []
         seen = set()
         for k, ((a, ma), (b, mb)) in zip(keys, pairs):
