@@ -23,6 +23,9 @@
 - **추측 구현 금지.** 모르는 챔피언스 규칙은 추측해서 넣지 않는다. 엔진이 지원하지 않는 효과는 `docs/KNOWN_GAPS.md`에 적고 사용자에게 알린다.
 - **가정은 먼저 검증한다.** `PROJECT_PLAN.md` 1절의 "확인 필요" 15개 항목을 단계 0에서 검증하고 결과를 `docs/VERIFIED.md`에 기록한다. 틀린 가정이 있으면 설계 문서부터 고친다.
 - **외부 사이트는 실제로 요청해서 확인한다.** 문서에 적힌 출처는 후보일 뿐이다. 요청 간격을 두고 응답을 캐시한다.
+- **공식 공지가 기준이다.** 레귤레이션, 시즌, 밸런스 조정은 공식 공지를 따른다. Showdown과 공지가 다르면 공지를 따르고, 차이를 `docs/KNOWN_GAPS.md`에 적는다.
+  - 세션이나 단계를 시작할 때, 데이터 작업 전에 `cd agent && uv run python -m pokechamp.data.official_news`를 실행한다.
+  - ⚠️ 새 공지가 나오면 `docs/OFFICIAL_SOURCES.md`의 관리 규칙대로 처리한다.
 
 ## 기술 스택
 
@@ -49,7 +52,11 @@ tests/
 
 ## 개발 명령
 
-> 단계 0에서 확정한 뒤 여기에 기록한다 (패키지 관리자, 엔진 서버 실행, 테스트, 린트).
+- Node 24(`.nvmrc`, Showdown이 22 이상을 요구한다), Python 3.12 이상(uv). Showdown은 git 서브모듈로 커밋을 고정한다(npm 패키지는 Reg M-C 이전 버전이다).
+- 처음 받았을 때: `git submodule update --init --depth 1` → `cd engine && npm install && npm run setup:showdown` → `cd agent && uv sync`
+- 엔진(`engine/`, 먼저 `nvm use`): `npm run server`(127.0.0.1:8787), `npm test`, `npm run typecheck`, `npm run selfplay -- 1000 stage0`, `npm run verify`
+- 에이전트(`agent/`): `uv run pytest`. 엔진 통합 테스트는 서버가 떠 있을 때만 돈다.
+- 엔진 API는 `/new_battle`, `/step`, `/legal_actions`, `/simulate`, `/validate_team`이다. 모두 `{"batch": [...]}`를 받는다. 배틀 상태는 Showdown 직렬화 JSON을 그대로 주고받는다.
 
 ## 데이터 규칙
 
