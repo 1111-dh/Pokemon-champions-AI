@@ -34,7 +34,7 @@
       "id": 1,
       "title": "허용 목록, 정적 데이터, 통계 수집",
       "status": "done",
-      "criteria": "스냅샷이 쌓이고, 시즌이 다른 페이지는 거부되고, 자동 실행 코드가 없음",
+      "criteria": "인게임 데미지 사례 일치(보류), 샘플 1만 개에 규칙 위반 세트 0개",
       "items": [
         {
           "text": "공식 허용 목록 (M-C 262 + 메가 82)",
@@ -57,7 +57,7 @@
           "done": true
         },
         {
-          "text": "update-stats (championsbattledata, 날짜 기준 시즌 검증, 값 단위 출처 기록)",
+          "text": "인게임 데미지 사례 대조: 보류 (2026-11-19 사용자 결정. 사례가 생기면 docs/damage_cases.json에 넣으면 테스트가 돈다)",
           "done": true
         }
       ]
