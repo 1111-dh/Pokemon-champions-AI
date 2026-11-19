@@ -299,7 +299,7 @@ def cmd_recommend_team(args: argparse.Namespace) -> int:
     except RecommendError as e:
         print(e)
         return 1
-    v = validate(b, r["_units"], args.validate, f"{r['seed']}-check") if args.validate else None
+    v = validate(b, r["_units"], args.validate, f"{r['seed']}-check", picks=args.validate_picks) if args.validate else None
     r.pop("_units")
     if args.save:
         ok, problems = validate_team(r["team"])
@@ -430,6 +430,8 @@ def main(argv: list[str] | None = None) -> int:
     rt.add_argument("--seed", help="시드 (기본은 설정값, 같은 시드면 같은 결과)")
     rt.add_argument("--validate", type=int, default=0, metavar="N",
                     help="정밀 시뮬레이션으로 검증: 메타 팀 N개와 짝지은 대전 (사용률 상위·무작위 팀과 비교)")
+    rt.add_argument("--validate-picks", choices=["equilibrium", "random"], default="equilibrium",
+                    help="검증의 선출 방식: 양쪽 균형 선출(기본) 또는 양쪽 무작위(단계 3 방식)")
     rt.add_argument("--save", help="이 이름으로 내 팀에 저장")
     rt.add_argument("--replace", action="store_true", help="같은 이름의 팀이 있으면 덮어쓰기")
     rt.add_argument("--json", action="store_true", help="JSON으로 출력")

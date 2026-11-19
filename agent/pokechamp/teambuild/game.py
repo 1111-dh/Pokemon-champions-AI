@@ -31,6 +31,17 @@ def subsets(rows: list[int], mega_rows: list[int | None], limit_mega: bool = Tru
     return np.array(out or fallback, dtype=np.int64)
 
 
+def subset_slots(mega_rows: list[int | None], limit_mega: bool = True) -> list[tuple[int, ...]]:
+    """subsets()와 같은 순서의 슬롯 번호 조합 (시뮬레이션에서 팀 프리뷰 선택을 만들 때 쓴다)."""
+    k = len(mega_rows)
+    size = min(3, k)
+    out, fallback = [], []
+    for combo in combinations(range(k), size):
+        holders = [i for i in combo if mega_rows[i] is not None]
+        (fallback if limit_mega and len(holders) > 1 else out).append(combo)
+    return out or fallback
+
+
 def payoff_tensor(M: np.ndarray, my_subsets: np.ndarray, opp_subsets: np.ndarray, assignment_weight: float) -> np.ndarray:
     """M: (내 상태, 상대 상태) 1:1 점수. my_subsets: (nA, s). opp_subsets: (n, nB, 3).
     → (n, nA, nB) 보수 (내 승률 근사)."""

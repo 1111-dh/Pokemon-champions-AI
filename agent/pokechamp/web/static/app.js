@@ -418,6 +418,11 @@ function recHtml(r) {
             <span class="k">무작위 대비</span><span>${diff(v.vs_random)}</span>
           </div>
           <p class="muted">${esc(v.policy)}. 사용률 상위 팀: ${esc(v.usage_top_team.join(", "))}</p></div>` : ""}
+        ${r.rerank ? `<div class="panel"><div class="panel-head"><h2>3:3 시뮬레이션 재평가</h2></div>
+          <ul class="plain">${r.rerank.candidates.map((c) => `<li>${c.chosen ? "<strong>" : ""}후보 ${c.rank}: 승률 ${pct1(c.win_rate)}${c.chosen ? " (선택)</strong>" : ""}
+            <span class="muted">점수 ${c.score.toFixed(3)} · ${esc(c.members.join(", "))}</span></li>`).join("")}</ul>
+          ${r.rerank.local ? `<p class="muted">국소 탐색 뒤 ${pct1(r.rerank.local.win_rate)} (전 ${pct1(r.rerank.local.before)}) → ${r.rerank.local.kept ? "유지" : "유의하게 낮아져 되돌림"}</p>` : ""}
+          <p class="muted">${esc(r.rerank.policy)}</p></div>` : ""}
         ${megas ? `<div class="panel"><div class="panel-head"><h2>메가 후보 점검</h2></div><ul class="plain">${megas}</ul></div>` : ""}
         <div class="panel"><div class="panel-head"><h2>남는 약점</h2></div>
           ${r.weaknesses.length ? `<ul class="plain">${r.weaknesses.map((w) => `<li>${esc(w.species)} <span class="muted">가중치 ${pct1(w.weight)} · 최선 ${esc(w.best_answer)} ${w.best_score.toFixed(2)}</span></li>`).join("")}</ul>`

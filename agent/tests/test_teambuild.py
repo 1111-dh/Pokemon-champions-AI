@@ -108,3 +108,14 @@ def test_recommend_fixed_and_excluded(real_conn):
     r = Builder(real_conn, SMALL, seed="t3").run(locked_sets=[locked])
     g = next(u for u in r["_units"] if u.species == "garchomp")
     assert g.locked and g.item == "choicescarf" and "choicescarf" not in [u.item for u in r["_units"] if u is not g]
+
+
+def test_subset_slots_aligned_with_subsets():
+    from pokechamp.teambuild.game import subset_slots
+    rows, mega = [0, 1, 2, 3, 4, 5], [None, 10, None, 11, None, None]
+    st = subsets(rows, mega, limit_mega=True)
+    sl = subset_slots(mega, limit_mega=True)
+    assert len(st) == len(sl) == 20 - 4                     # 소지자 둘(1, 3번)이 함께 든 조합 4개를 뺀다
+    to_slot = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 10: 1, 11: 3}   # 상태 행(메가 행 포함) → 슬롯
+    for state, slots in zip(st, sl):
+        assert sorted(to_slot[r] for r in state) == list(slots)
