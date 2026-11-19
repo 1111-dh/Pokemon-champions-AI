@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>포챔 보조 AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div>
+        <h1>포챔 보조 AI</h1>
+        <p class="brand-sub">싱글배틀 3v3 개발 콘솔</p>
+      </div>
+    </div>
+    <div class="topbar-meta">
+      <span id="engine-pill" class="pill">엔진 확인 중</span>
+      <span id="branch-pill" class="pill pill-quiet"></span>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="화면">
+    <button role="tab" data-tab="progress" aria-selected="true">진행 현황</button>
+    <button role="tab" data-tab="battle">배틀 해보기</button>
+    <button role="tab" data-tab="dex">도감</button>
+    <button role="tab" data-tab="team">팀 검증</button>
+    <button role="tab" data-tab="news">공식 공지</button>
+  </nav>
+
+  <main>
+    <!-- 진행 현황 -->
+    <section id="tab-progress" class="tab-panel" role="tabpanel">
+      <div class="track-wrap">
+        <ol id="stage-track" class="stage-track" aria-label="개발 단계"></ol>
+      </div>
+      <div class="grid-2">
+        <div class="panel" id="stage-detail"></div>
+        <div class="stack">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>지금 돌려 보기</h2>
+            </div>
+            <div class="run-row">
+              <button class="btn" id="run-tests">테스트 실행</button>
+              <span id="tests-result" class="muted">Python과 엔진 테스트를 한 번에 돌립니다.</span>
+            </div>
+            <div class="run-row">
+              <button class="btn" id="run-selfplay">무작위 봇 대전 100판</button>
+              <span id="selfplay-result" class="muted">엔진이 끝까지 오류 없이 도는지 봅니다.</span>
+            </div>
+            <pre id="tests-tail" class="tail" hidden></pre>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h2>데이터 상태</h2></div>
+            <div id="status-box" class="kv"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h2>최근 커밋</h2><span id="git-dirty" class="muted"></span></div>
+            <ul id="git-log" class="commit-list"></ul>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>가정 검증 결과</h2>
+          <span class="muted">docs/VERIFIED.md</span>
+        </div>
+        <table class="table" id="verified-table">
+          <thead><tr><th>#</th><th>항목</th><th>결과</th><th>상태</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 배틀 해보기 -->
+    <section id="tab-battle" class="tab-panel" role="tabpanel" hidden>
+      <div class="battle-bar">
+        <p class="muted">무작위로 만든 내 팀으로, 무작위로 행동하는 봇과 한 판을 둡니다. 상대 정보는 게임처럼 공개된 것만 보입니다.</p>
+        <div class="battle-controls">
+          <input id="battle-seed" class="input" placeholder="시드 (비우면 무작위)" aria-label="시드">
+          <button class="btn btn-primary" id="battle-new">새 배틀</button>
+        </div>
+      </div>
+      <div id="battle-empty" class="empty">
+        <p>새 배틀을 누르면 양쪽 팀 6마리가 나오고, 선출 3마리와 선봉을 고르는 것부터 시작합니다.</p>
+      </div>
+      <div id="battle" class="battle" hidden>
+        <div class="arena">
+          <div class="side side-opp">
+            <div class="side-label">상대</div>
+            <div id="opp-roster" class="roster"></div>
+            <div id="opp-active" class="active-card"></div>
+          </div>
+          <div class="side side-me">
+            <div id="me-active" class="active-card"></div>
+            <div id="me-roster" class="roster"></div>
+            <div class="side-label">나</div>
+          </div>
+          <div id="action-area" class="action-area"></div>
+        </div>
+        <aside class="log-wrap">
+          <div class="panel-head"><h2>배틀 로그</h2><span id="battle-turn" class="muted"></span></div>
+          <ol id="battle-log" class="log" aria-live="polite"></ol>
+        </aside>
+      </div>
+    </section>
+
+    <!-- 도감 -->
+    <section id="tab-dex" class="tab-panel" role="tabpanel" hidden>
+      <div class="dex-bar">
+        <input id="dex-q" class="input" placeholder="이름으로 찾기 (한국어/영어)" aria-label="이름으로 찾기">
+        <select id="dex-type" class="input" aria-label="타입"><option value="">모든 타입</option></select>
+        <label class="check"><input type="checkbox" id="dex-mega"> 메가만</label>
+        <span id="dex-count" class="muted"></span>
+      </div>
+      <div class="dex">
+        <div id="dex-list" class="dex-list" role="list"></div>
+        <div id="dex-detail" class="panel dex-detail">
+          <p class="muted">포켓몬을 고르면 종족값과 배울 수 있는 기술이 나옵니다.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 팀 검증 -->
+    <section id="tab-team" class="tab-panel" role="tabpanel" hidden>
+      <div class="grid-2">
+        <div class="panel">
+          <div class="panel-head"><h2>Showdown 형식 팀</h2></div>
+          <textarea id="team-text" class="textarea" spellcheck="false"
+            placeholder="Garchomp @ Garchompite Z&#10;Ability: Rough Skin&#10;EVs: 32 Atk / 2 HP / 32 Spe&#10;Jolly Nature&#10;- Dragon Claw&#10;- Earthquake&#10;..."></textarea>
+          <div class="run-row">
+            <button class="btn btn-primary" id="team-validate">검증</button>
+            <button class="btn" id="team-random">무작위 팀 넣기</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>결과</h2></div>
+          <div id="team-result" class="muted">레귤레이션 M-C 규칙(6마리, 도구 중복 금지, Stat Points 능력치당 32·합계 66)으로 검사합니다. 위반이 있어도 팀은 쓸 수 있고, 경고로만 보여 줍니다.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 공식 공지 -->
+    <section id="tab-news" class="tab-panel" role="tabpanel" hidden>
+      <div class="dex-bar">
+        <button class="btn" id="news-check">지금 확인</button>
+        <span id="news-meta" class="muted"></span>
+      </div>
+      <div class="panel">
+        <table class="table" id="news-table">
+          <thead><tr><th></th><th>게시</th><th>종류</th><th>제목</th><th>기간</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

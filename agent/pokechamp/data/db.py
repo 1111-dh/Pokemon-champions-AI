@@ -118,10 +118,10 @@ CREATE TABLE IF NOT EXISTS update_log (
 """
 
 
-def connect(path: Path | None = None) -> sqlite3.Connection:
+def connect(path: Path | None = None, check_same_thread: bool = True) -> sqlite3.Connection:
     path = path or DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)

@@ -3,7 +3,7 @@
 import path from 'node:path';
 import { PS, FORMAT_ID, toPsSeed } from './ps';
 import { mulberry32, randomChoice } from './random-chooser';
-import { validateTeam } from './teams';
+import { legalRandomTeam, validateTeam } from './teams';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { State } = require(path.resolve(__dirname, '../external/pokemon-showdown/dist/sim/state'));
@@ -23,6 +23,13 @@ export function validate(req: { team: TeamInput }) {
   const team = parseTeam(req.team);
   const problems = validateTeam(team);
   return { valid: !problems, problems: problems ?? [], team };
+}
+
+// ---------- /random_team ----------
+/** 시드로 결정되는 무작위 합법 팀 (테스트, 웹 배틀 놀이터용). */
+export function randomTeam(req: { seed: string }) {
+  const { team } = legalRandomTeam(req.seed);
+  return { team, packed: PS.Teams.pack(team), text: PS.Teams.export(team) };
 }
 
 // ---------- 배틀 생성과 직렬화 ----------
