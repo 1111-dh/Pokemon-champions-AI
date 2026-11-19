@@ -1,0 +1,4 @@
+# 별칭 테이블. purpose=name_ko: PokeAPI에 없는 한국어 이름 보충, purpose=alias: 입력 파서용 약칭(단계 5).
+# kind: species | move | item | ability | nature
+kind,target_id,alias,purpose,note
+item,roseliberry,로셀열매,name_ko,PokeAPI에 한국어 이름 없음

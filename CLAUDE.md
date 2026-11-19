@@ -56,6 +56,7 @@ tests/
 - 처음 받았을 때: `git submodule update --init --depth 1` → `cd engine && npm install && npm run setup:showdown` → `cd agent && uv sync`
 - 엔진(`engine/`, 먼저 `nvm use`): `npm run server`(127.0.0.1:8787), `npm test`, `npm run typecheck`, `npm run selfplay -- 1000 stage0`, `npm run verify`
 - 에이전트(`agent/`): `uv run pytest`. 엔진 통합 테스트는 서버가 떠 있을 때만 돈다.
+- CLI(`agent/`): `uv run pokechamp status`, `uv run pokechamp update-static [--dry-run|--yes]`, `uv run pokechamp rollback-static <버전>`. DB는 `data/db/pokechamp.sqlite`(커밋 안 함)이고, 한국어 이름 보충과 약칭은 `data/aliases.csv`에 둔다.
 - 엔진 API는 `/new_battle`, `/step`, `/legal_actions`, `/simulate`, `/validate_team`이다. 모두 `{"batch": [...]}`를 받는다. 배틀 상태는 Showdown 직렬화 JSON을 그대로 주고받는다.
 
 ## 데이터 규칙
@@ -124,4 +125,4 @@ tests/
 
 - 각 단계가 끝나면 **만든 것, 검증한 것, 남은 것**을 짧게 보고한다.
 - 사용자가 결정할 사항은 임의로 정하지 말고 기본값을 제안해서 묻는다.
-- 커밋과 푸시는 기능별로한다. 하기 전에 사용자에게 반드시 물어본다. 원격 저장소는 `origin` = github.com/1111-dh/Pokemon-champions-AI이다.
+- 커밋과 푸시는 기능 별로한다. 기능 별로 PR를 생성한다. 하기 전에 사용자에게 반드시 물어본다. 원격 저장소는 `origin` = github.com/1111-dh/Pokemon-champions-AI이다.
