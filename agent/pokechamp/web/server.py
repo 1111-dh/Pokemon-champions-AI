@@ -53,6 +53,7 @@ class App:
             "/api/battle/act": lambda b: self.playground.act(b["id"], b["choice"]),
             "/api/team/validate": self.team_check,
             "/api/team/save": self.team_save,
+            "/api/team/recommend": self.team_recommend,
             "/api/team/random": lambda b: self.client.batch("/random_team", [{"seed": b.get("seed") or secrets.token_hex(4)}])[0]["result"],
             "/api/selfplay": self.selfplay,
             "/api/news/check": self.news_check,
@@ -140,6 +141,42 @@ class App:
         valid, problems = validate_team(team, self.client)
         tid = save_team(self.conn, name, team, "manual", valid, problems if valid is not None else [], replace=bool(b.get("replace")))
         return {"id": tid, "name": name, "valid": valid, "problems": problems, **info}
+
+    def team_recommend(self, b: dict) -> dict:
+        """파티 추천 (PROJECT_PLAN 7절). 첫 실행은 상성 행렬 계산에 1분쯤, 이후는 10초 남짓. 검증을 켜면 시뮬레이션이 더 돈다."""
+        from pokechamp.teambuild.search import Builder, RecommendError
+        from pokechamp.teambuild.validate import validate as validate_sim
+        from pokechamp.teams.store import export_text
+
+        idx = NameIndex(self.conn)
+        names = lambda key: [x.strip() for x in str(b.get(key) or "").replace("\n", ",").split(",") if x.strip()]  # noqa: E731
+        try:
+            fixed = [idx.find("species", n)[0] for n in names("fix")]
+            exclude = [idx.find("species", n)[0] for n in names("exclude")]
+        except TeamParseError as e:
+            raise ValueError(str(e)) from e
+        try:
+            builder = Builder(self.conn, seed=(str(b.get("seed")).strip() or None) if b.get("seed") else None, client=self.client)
+            r = builder.run(fixed, [], exclude)
+        except RecommendError as e:
+            raise ValueError(str(e)) from e
+        n = int(b.get("validate") or 0)
+        v = validate_sim(builder, r["_units"], min(n, 2000), f"{r['seed']}-check", self.client) if n else None
+        r.pop("_units")
+        if v:
+            for k in ("recommended", "usage_top", "random"):
+                v[k].pop("scores", None)
+        r["validation"] = v
+        r["export"] = export_text(r["team"])
+        for m in r["members"]:
+            m["sprite"] = sprite_id(m["set"]["species"])
+        name = (b.get("save") or "").strip()
+        if name:
+            valid, problems = validate_team(r["team"], self.client)
+            save_team(self.conn, name, r["team"], "recommended", valid, problems if valid is not None else [],
+                      replace=bool(b.get("replace")))
+            r["saved_as"] = name
+        return json.loads(json.dumps(r, default=float))
 
     # ---------- 공식 공지 ----------
     def news(self, q: dict) -> dict:

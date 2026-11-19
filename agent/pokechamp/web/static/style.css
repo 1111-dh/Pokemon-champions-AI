@@ -293,3 +293,14 @@ button.mon-chip[aria-pressed="true"] { border-color: var(--blue); box-shadow: in
   .commit-list li { grid-template-columns: 60px 1fr; }
   .commit-list li span:nth-child(2) { display: none; }
 }
+
+/* 파티 추천 */
+.rec-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.rec-form label { display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); }
+.rec-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.rec-mon { display: grid; grid-template-columns: 64px 1fr; gap: 10px; align-items: start; }
+.rec-mon img { width: 64px; height: 64px; image-rendering: pixelated; }
+.rec-mon .nm { font-weight: 500; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.plain { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14px; }
+.warn-box { background: var(--amber-soft); }
+.warn-box p { margin: 0; }
