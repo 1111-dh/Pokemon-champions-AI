@@ -66,7 +66,8 @@ export { PS };
 
 /**
  * 최대 데미지 봇 (기준선 정책, PROJECT_PLAN 6절 정밀 시뮬레이션): 현재 상대에게 기대 데미지가 가장 큰 기술을 고른다.
- * 메가진화가 가능하면 첫 공격 턴에 한다. 공격 기술이 없거나 모두 막혀 있으면 무작위로 고른다.
+ * 메가진화가 가능하면 첫 공격 턴에 한다. 자폭류와 첫 턴이 지난 만나자마자는 고르지 않는다.
+ * 쓸 공격 기술이 없거나 모두 막혀 있으면 무작위로 고른다.
  */
 export function maxDamageChoice(battle: any, side: any, rng: Rng): string | null {
   const request = side.activeRequest;
@@ -84,6 +85,9 @@ export function maxDamageChoice(battle: any, side: any, rng: Rng): string | null
       if (mv.disabled) return;
       const move = battle.dex.getActiveMove(mv.id);
       if (move.category === 'Status') return;
+      // 자기를 쓰러뜨리는 기술과, 첫 행동이 아니면 실패하는 기술(만나자마자 등)은 고르지 않는다
+      if (move.selfdestruct || ['finalgambit', 'memento'].includes(move.id)) return;
+      if (['fakeout', 'firstimpression'].includes(move.id) && me.activeMoveActions > 0) return;
       move.willCrit = false;
       const dmg = battle.actions.getDamage(me, foe, move, true);
       const acc = move.accuracy === true ? 1 : move.accuracy / 100;
