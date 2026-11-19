@@ -22,7 +22,9 @@ from pokechamp.engine_client import EngineClient
 BATCH = 400
 # 빠른 근사 알고리즘 버전. engine/src/matchup.ts의 계산 방식을 바꾸면 올린다 (캐시 키에 들어가서 이전 값은 쓰이지 않는다).
 # 1: 최고 기술 n타 + 선공, 2: 턴 단위 HP 경주 (반동, 흡수, 랭크 변화, 위협, 띠·옹골참, 접촉 피해, 회복, 모래바람 등)
-ALGO_VERSION = 2
+# 3: 날씨·필드 지속 턴, 날씨 스피드 특성, 날씨 명중, 날씨 회복·피해 특성, 그래스필드 회복·그래스슬라이더, 사이코필드 선공기 차단,
+#    확정 부가효과의 상대 공격·특공·스피드 하락
+ALGO_VERSION = 3
 
 
 def canonical(set_: dict[str, Any], mega: bool = False) -> dict[str, Any]:

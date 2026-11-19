@@ -69,6 +69,19 @@ export { PS };
  * 메가진화가 가능하면 첫 공격 턴에 한다. 자폭류와 첫 턴이 지난 만나자마자는 고르지 않는다.
  * 쓸 공격 기술이 없거나 모두 막혀 있으면 무작위로 고른다.
  */
+/** 날씨로 바뀌는 명중(번개·폭풍: 비 필중·쾌청 50, 눈보라: 눈 필중)을 반영한 명중률. Showdown은 이를 기술의 onModifyMove에서
+ *  바꾸지만, 그 이벤트를 직접 부르면 다른 기술에서 난수를 쓰는 부작용이 있을 수 있어 규칙을 여기 적는다. */
+function weatherAccuracy(battle: any, move: any): number {
+  const w = battle.field.effectiveWeather();
+  let acc = move.accuracy;
+  if (['thunder', 'hurricane'].includes(move.id)) {
+    if (['raindance', 'primordialsea'].includes(w)) acc = true;
+    else if (['sunnyday', 'desolateland'].includes(w)) acc = 50;
+  }
+  if (move.id === 'blizzard' && ['hail', 'snowscape'].includes(w)) acc = true;
+  return acc === true ? 1 : acc / 100;
+}
+
 export function maxDamageChoice(battle: any, side: any, rng: Rng): string | null {
   const request = side.activeRequest;
   if (!request || request.wait || request.teamPreview || request.forceSwitch) return randomChoice(request, rng, 0);
@@ -90,7 +103,7 @@ export function maxDamageChoice(battle: any, side: any, rng: Rng): string | null
       if (['fakeout', 'firstimpression'].includes(move.id) && me.activeMoveActions > 0) return;
       move.willCrit = false;
       const dmg = battle.actions.getDamage(me, foe, move, true);
-      const acc = move.accuracy === true ? 1 : move.accuracy / 100;
+      const acc = weatherAccuracy(battle, move);
       const score = (typeof dmg === 'number' ? dmg : 0) * acc + rng() * 1e-6;
       if (score > best.score) best = { idx: i, score };
     });
