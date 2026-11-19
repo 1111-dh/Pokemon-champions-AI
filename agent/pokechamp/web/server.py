@@ -27,6 +27,8 @@ from pokechamp.data.db import active_version, connect
 from pokechamp.engine_client import EngineClient, EngineError
 from pokechamp.paths import ENGINE_DIR, ROOT
 from pokechamp.status import status_data
+from pokechamp.input.team_text import FIELD_KO, NameIndex, TeamParseError, parse_team
+from pokechamp.teams.store import fill_defaults, list_teams, save_team, validate as validate_team
 from pokechamp.web.battle import Playground, sprite_id
 
 STATIC = Path(__file__).parent / "static"
@@ -44,11 +46,13 @@ class App:
             "/api/pokemon": self.pokemon_list,
             "/api/news": self.news,
             "/api/engine": self.engine_health,
+            "/api/teams": lambda q: [{k: v for k, v in t.items() if k != "team_json"} for t in list_teams(self.conn)],
         }
         self.post_routes: dict[str, Callable[[dict], Any]] = {
             "/api/battle/new": lambda b: self.playground.new(b.get("seed") or None),
             "/api/battle/act": lambda b: self.playground.act(b["id"], b["choice"]),
-            "/api/team/validate": lambda b: self.client.validate_team(b["text"]),
+            "/api/team/validate": self.team_check,
+            "/api/team/save": self.team_save,
             "/api/team/random": lambda b: self.client.batch("/random_team", [{"seed": b.get("seed") or secrets.token_hex(4)}])[0]["result"],
             "/api/selfplay": self.selfplay,
             "/api/news/check": self.news_check,
@@ -107,6 +111,35 @@ class App:
                  "spread": max(a.spread_dist, key=lambda x: x[1])[0] if a.spread_dist else None}
                 for a in load_archetypes(self.conn, learn_id, reg)[:6]]
         return {"id": sid, "moves": moves, "sets": sets}
+
+    # ---------- 팀 ----------
+    def _parse(self, b: dict) -> tuple[list, list[dict]]:
+        try:
+            sets = parse_team(b["text"], NameIndex(self.conn))
+        except TeamParseError as e:
+            raise ValueError(str(e)) from e
+        notes = fill_defaults(self.conn, sets) if b.get("fill") else []
+        missing = [{"species": p.species, "fields": [FIELD_KO[f] for f in p.missing]} for p in sets if p.missing]
+        return sets, [{"notes": notes, "missing": missing}]
+
+    def team_check(self, b: dict) -> dict:
+        sets, (info,) = self._parse(b)
+        team = [p.to_set() for p in sets]
+        valid, problems = validate_team(team, self.client)
+        return {"valid": valid, "problems": problems, "team": team, **info}
+
+    def team_save(self, b: dict) -> dict:
+        name = (b.get("name") or "").strip()
+        if not name:
+            raise ValueError("팀 이름을 넣으세요")
+        sets, (info,) = self._parse(b)
+        if info["missing"] and not b.get("keep_empty"):
+            raise ValueError("빈 항목이 있다: " + "; ".join(f"{m['species']} {', '.join(m['fields'])}" for m in info["missing"])
+                             + ". '빈 항목을 통계 기본값으로 채우기'를 켜거나 비워 둔 채 저장을 고르세요.")
+        team = [p.to_set() for p in sets]
+        valid, problems = validate_team(team, self.client)
+        tid = save_team(self.conn, name, team, "manual", valid, problems if valid is not None else [], replace=bool(b.get("replace")))
+        return {"id": tid, "name": name, "valid": valid, "problems": problems, **info}
 
     # ---------- 공식 공지 ----------
     def news(self, q: dict) -> dict:

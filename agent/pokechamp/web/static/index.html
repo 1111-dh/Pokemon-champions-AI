@@ -132,15 +132,25 @@
         <div class="panel">
           <div class="panel-head"><h2>Showdown 형식 팀</h2></div>
           <textarea id="team-text" class="textarea" spellcheck="false"
-            placeholder="Garchomp @ Garchompite Z&#10;Ability: Rough Skin&#10;EVs: 32 Atk / 2 HP / 32 Spe&#10;Jolly Nature&#10;- Dragon Claw&#10;- Earthquake&#10;..."></textarea>
+            placeholder="한카리아스 @ 구애스카프&#10;특성: 까칠한피부&#10;명랑 성격&#10;SP: 2 HP / 32 공격 / 32 스피드&#10;- 지진&#10;- 역린&#10;&#10;Garchomp @ Choice Scarf (영어도 됩니다)"></textarea>
+          <label class="check"><input type="checkbox" id="team-fill"> 빈 항목을 최신 통계 기본값으로 채우기</label>
           <div class="run-row">
             <button class="btn btn-primary" id="team-validate">검증</button>
             <button class="btn" id="team-random">무작위 팀 넣기</button>
           </div>
+          <div class="run-row">
+            <input id="team-name" class="input" placeholder="저장할 팀 이름" aria-label="저장할 팀 이름">
+            <button class="btn" id="team-save">팀 저장</button>
+            <label class="check"><input type="checkbox" id="team-keep"> 빈 항목은 비워 둔 채 저장</label>
+          </div>
         </div>
         <div class="panel">
           <div class="panel-head"><h2>결과</h2></div>
-          <div id="team-result" class="muted">레귤레이션 M-C 규칙(6마리, 도구 중복 금지, Stat Points 능력치당 32·합계 66)으로 검사합니다. 위반이 있어도 팀은 쓸 수 있고, 경고로만 보여 줍니다.</div>
+          <div id="team-result" class="muted">한국어나 영어 이름으로 넣을 수 있습니다. 레귤레이션 M-C 규칙(6마리, 도구 중복 금지, Stat Points 능력치당 32·합계 66)으로 검사합니다. 위반이 있어도 팀은 쓸 수 있고, 경고로만 보여 줍니다.</div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>저장한 팀</h2></div>
+          <ul id="team-list" class="commit-list"></ul>
         </div>
       </div>
     </section>

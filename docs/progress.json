@@ -86,10 +86,10 @@
         },
         {
           "text": "import-team (임의 6마리 입력, 검증 경고, 빈 항목 질문)",
-          "done": false
+          "done": true
         },
         {
-          "text": "인게임 데미지 사례 대조 (사용자 확인 값)",
+          "text": "인게임 데미지 사례 대조 (사용자 확인 값 대기: docs/damage_cases.json)",
           "done": false
         }
       ]

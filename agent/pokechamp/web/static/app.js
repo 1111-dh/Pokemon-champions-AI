@@ -56,7 +56,7 @@ function showTab(name) {
   document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
   document.querySelectorAll(".tab-panel").forEach((p) => { p.hidden = p.id !== `tab-${name}`; });
   history.replaceState(null, "", `#${name}`);
-  if (!loaded[name]) { loaded[name] = true; ({ progress: loadProgress, dex: loadDex, news: loadNews })[name]?.(); }
+  if (!loaded[name]) { loaded[name] = true; ({ progress: loadProgress, dex: loadDex, news: loadNews, team: loadTeams })[name]?.(); }
 }
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
@@ -340,16 +340,38 @@ $("#team-random").addEventListener("click", (ev) => withBusy(ev.currentTarget, a
   const r = await api("/api/team/random", {});
   $("#team-text").value = r.text.trim();
 }));
+function teamResultHtml(r, saved) {
+  const names = r.team.map((x) => esc(x.species) + (x.filled ? " (기본값 채움)" : "")).join(", ");
+  const state = r.valid === null ? `<span class="state-badge">검증 건너뜀</span>`
+    : r.valid ? `<span class="state-badge ok">규칙 통과</span>` : `<span class="state-badge warn">위반 ${r.problems.length}개</span>`;
+  return `<p>${saved ? `<strong>'${esc(saved)}' 저장함</strong> ` : ""}${state}</p>
+    ${r.problems.length ? `<ul>${r.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
+    ${r.missing && r.missing.length ? `<p class="info-line">빈 항목: ${r.missing.map((m) => `${esc(m.species)} ${esc(m.fields.join(", "))}`).join(" / ")}</p>` : ""}
+    ${r.notes && r.notes.length ? `<p class="info-line">채운 값: ${r.notes.map(esc).join("<br>")}</p>` : ""}
+    <p class="info-line">${names}</p>`;
+}
 $("#team-validate").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
   const text = $("#team-text").value.trim();
   if (!text) { toast("검증할 팀을 붙여 넣으세요."); return; }
-  const r = await api("/api/team/validate", { text });
-  const names = r.team.map((s) => esc(s.species)).join(", ");
-  $("#team-result").innerHTML = r.valid
-    ? `<p><span class="state-badge ok">규칙 통과</span></p><p class="info-line">${names}</p>`
-    : `<p><span class="state-badge warn">위반 ${r.problems.length}개</span></p>
-       <ul>${r.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul><p class="info-line">${names}</p>`;
+  const r = await api("/api/team/validate", { text, fill: $("#team-fill").checked });
+  $("#team-result").innerHTML = teamResultHtml(r);
 }));
+$("#team-save").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+  const text = $("#team-text").value.trim();
+  const name = $("#team-name").value.trim();
+  if (!text || !name) { toast("팀 텍스트와 이름을 넣으세요."); return; }
+  const r = await api("/api/team/save", { text, name, fill: $("#team-fill").checked, keep_empty: $("#team-keep").checked });
+  $("#team-result").innerHTML = teamResultHtml(r, r.name);
+  loadTeams();
+}));
+async function loadTeams() {
+  try {
+    const teams = await api("/api/teams");
+    $("#team-list").innerHTML = teams.length ? teams.map((t) => `<li><strong>${esc(t.name)}</strong>
+      <span class="muted">${t.source === "manual" ? "직접 입력" : "추천"}</span>
+      <span>${t.team.map((x) => esc(x.species)).join(", ")}</span></li>`).join("") : `<li class="muted">아직 없습니다.</li>`;
+  } catch (e) { $("#team-list").textContent = e.message; }
+}
 
 // ---------------- 공식 공지 ----------------
 async function loadNews() {
