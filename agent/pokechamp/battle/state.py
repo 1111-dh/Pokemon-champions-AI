@@ -41,6 +41,7 @@ class Mon:
     mega: bool = False
     seen: bool = False                # 배틀에 나왔다
     transformed: bool = False         # 변신 중 (상대의 기술을 쓴다)
+    last_move: str = ""               # 출전 중 마지막으로 쓴 기술 (구애 고정 판단)
 
     def summary(self) -> dict[str, Any]:
         return {"species": self.species, "hp": self.hp, "hp_abs": self.hp_abs, "status": self.status, "fainted": self.fainted,
@@ -157,6 +158,7 @@ class BattleState:
                 if sd.active and sd.active in sd.mons and e.value != "replace":
                     sd.mons[sd.active].boosts = {k: 0 for k in BOOST_KEYS}   # 교체하면 랭크가 풀린다
                     sd.mons[sd.active].transformed = False
+                    sd.mons[sd.active].last_move = ""
                 if e.value == "replace":                               # 일루전 해제: 랭크는 그대로 이어진다
                     if sd.active and sd.active in sd.mons and sd.active != sp:
                         m.boosts = dict(sd.mons[sd.active].boosts)
@@ -176,6 +178,8 @@ class BattleState:
                 if (sd is self.me and m.set and e.move != "struggle" and not m.transformed
                         and to_id(e.move) not in {to_id(x) for x in m.set.get("moves", [])}):
                     warns.append(f"내 {sp}에게 없는 기술: {e.move}")
+                if e.move != "struggle":
+                    m.last_move = e.move
                 if e.move not in m.moves and e.move != "struggle" and not m.transformed:
                     m.moves.append(e.move)
                     if sd is self.opp and len(m.moves) > 4:
