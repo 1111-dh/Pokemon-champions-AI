@@ -395,6 +395,27 @@ def cmd_battle_check(args: argparse.Namespace) -> int:
     return 0 if not bad else 1
 
 
+def cmd_battle(args: argparse.Namespace) -> int:
+    from pokechamp.battle.cli_session import TextBattle
+    from pokechamp.battle.search import SearchConfig
+    from pokechamp.select.recommend import SelectError, parse_opponents
+    from pokechamp.teams.store import load_team
+    conn = connect()
+    try:
+        t = load_team(conn, args.team)
+        opp, notes = parse_opponents(conn, args.opp)
+    except (SelectError, ValueError) as e:
+        print(e)
+        return 1
+    for n in notes:
+        print(f"⚠️ {n}")
+    if t["problems"]:
+        print(f"⚠️ 내 팀에 규칙 위반 경고가 {len(t['problems'])}개 있다. 추천은 경고가 있는 팀으로 계산한다")
+    cfg = SearchConfig(samples=args.samples, reps=args.reps, mix=args.mix, seed=args.seed or "battle", solve=args.solve)
+    TextBattle(conn, t["team"], opp, cfg=cfg, seed=args.seed).run(recommend_selection=not args.no_select)
+    return 0
+
+
 def cmd_rollback_static(args: argparse.Namespace) -> int:
     from pokechamp.data.static.update import activate_version
     conn = connect()
@@ -481,6 +502,17 @@ def main(argv: list[str] | None = None) -> int:
     bc.add_argument("--seed", default="battle-check")
     bc.add_argument("--verbose", action="store_true", help="불일치 예시 출력")
     bc.set_defaults(fn=cmd_battle_check)
+    ba = sub.add_parser("battle", help="배틀 세션: 선출 추천 → 매 턴 기술 추천, 관찰을 텍스트로 입력")
+    ba.add_argument("--team", required=True, help="저장한 내 팀 이름")
+    ba.add_argument("--opp", required=True, help="상대 6마리 (쉼표로 구분)")
+    ba.add_argument("--samples", type=int, default=8, help="턴마다 상대 세트 샘플 수 (늘리면 느리고 정확)")
+    ba.add_argument("--reps", type=int, default=3, help="칸·샘플마다 롤아웃 판 수")
+    ba.add_argument("--mix", type=float, default=0.3, help="상대 모델 최선 응수 비율 (--solve bayes일 때)")
+    ba.add_argument("--solve", choices=["model", "bayes"], default="model",
+                    help="model: 상대 모델 대응(검증됨, 기본) / bayes: 균형 + 상대 모델 혼합")
+    ba.add_argument("--seed", help="시드 (기본은 시각)")
+    ba.add_argument("--no-select", action="store_true", help="선출 추천을 건너뜀")
+    ba.set_defaults(fn=cmd_battle)
     rb = sub.add_parser("rollback-static", help="이전 정적 데이터 버전으로 되돌리기")
     rb.add_argument("version", type=int)
     rb.set_defaults(fn=cmd_rollback_static)
