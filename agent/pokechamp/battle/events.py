@@ -236,7 +236,7 @@ class LogConverter:
                           note=src))
             elif cmd == "-ability":
                 s, sp = mon(args[0])
-                add(Event("ability", s, species=sp, ability=to_id(args[1])))
+                add(Event("ability", s, species=sp, ability=to_id(args[1]), note=src))
             elif cmd == "-crit":
                 s, sp = mon(args[0])                    # 급소를 맞은 쪽 → 공격한 쪽은 반대편
                 add(Event("crit", "opp" if s == "me" else "me"))

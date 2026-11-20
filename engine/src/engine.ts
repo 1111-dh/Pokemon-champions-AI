@@ -203,3 +203,124 @@ export function simulate(req: SimulateReq) {
   }
   return { reps, wins, p1WinRate: wins.p1 / Math.max(1, reps - wins.unfinished), games };
 }
+
+// ---------- /build_state ----------
+// 관찰한 배틀 상태(추적기)와 상대 세트 샘플 하나로, 그 시점부터 진행할 수 있는 배틀 상태를 만든다 (단계 5 탐색용, PROJECT_PLAN 9.3).
+// 팀 프리뷰를 picks(첫 번호가 지금 출전 중인 포켓몬)로 진행한 뒤, 선출된 3마리의 HP·상태이상·랭크·기절·메가와 날씨·필드를 덮어쓴다.
+// 다루지 않는 것(KNOWN_GAPS): 대타출동·씨뿌리기·앵콜·도발·혼란·방어 연속 등 휘발성 상태, PP, 벽·순풍·스텔스록 같은 사이드 상태.
+export interface MonPatch {
+  hp?: number;            // 정확한 HP (내 쪽)
+  hpPct?: number;         // HP % (상대 쪽). 0보다 크면 최소 1
+  status?: string;        // brn par slp frz psn tox, '' = 없음
+  statusTurns?: number;   // slp: 남은 잠 턴 수(모르면 2), tox: 맹독 단계
+  boosts?: Record<string, number>;
+  fainted?: boolean;
+  mega?: boolean;         // 이미 메가진화했다
+  itemConsumed?: boolean; // 도구를 썼다(열매·기합의띠 등)
+  choiceLock?: string;    // 구애 계열로 고정된 기술 id (출전 중일 때)
+}
+export interface BuildStateReq {
+  p1: TeamInput; p2: TeamInput; seed: string;
+  picks: { p1: string; p2: string };
+  mons?: { p1?: (MonPatch | null)[]; p2?: (MonPatch | null)[] };   // 선출 순서(picks 순서)대로
+  field?: { weather?: string; weatherTurns?: number; terrain?: string; terrainTurns?: number };
+  megaUsed?: { p1?: boolean; p2?: boolean };
+  turn?: number;
+}
+const WEATHER_IDS: Record<string, string> = { sun: 'sunnyday', rain: 'raindance', sand: 'sandstorm', snow: 'snowscape' };
+const TERRAIN_IDS: Record<string, string> = { electric: 'electricterrain', grassy: 'grassyterrain', psychic: 'psychicterrain',
+  misty: 'mistyterrain' };
+const BOOST_ZERO = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 };
+
+export function buildState(req: BuildStateReq) {
+  const battle = createBattle({ p1: req.p1, p2: req.p2, seed: req.seed, picks: req.picks });
+  if (!battle.getSide('p1').activeRequest || battle.getSide('p1').activeRequest.teamPreview) {
+    throw new Error('팀 프리뷰가 끝나지 않았다 (picks 확인)');
+  }
+  for (const sid of ['p1', 'p2'] as SideId[]) {
+    const side = battle.getSide(sid);
+    const patches = req.mons?.[sid] ?? [];
+    side.pokemon.forEach((p: any, i: number) => {
+      const m = patches[i];
+      if (!m) return;
+      if (m.mega && p.canMegaEvo) battle.actions.runMegaEvo(p);
+      if (m.itemConsumed) {
+        p.lastItem = p.item;
+        p.item = '';
+        p.itemState = battle.initEffectState({ id: '' });
+      }
+      if (m.fainted) {
+        p.hp = 0;
+        p.fainted = true;
+        p.status = 'fnt';
+        return;
+      }
+      if (m.hp !== undefined) p.hp = Math.max(1, Math.min(p.maxhp, Math.round(m.hp)));
+      else if (m.hpPct !== undefined) p.hp = Math.max(1, Math.min(p.maxhp, Math.round(p.maxhp * m.hpPct / 100)));
+      if (m.status !== undefined) {
+        p.status = m.status;
+        p.statusState = battle.initEffectState({ id: m.status, target: p });
+        if (m.status === 'slp') p.statusState.startTime = p.statusState.time = m.statusTurns ?? 2;
+        if (m.status === 'tox') p.statusState.stage = m.statusTurns ?? 0;
+      }
+      if (m.boosts) p.boosts = { ...BOOST_ZERO, ...m.boosts };
+      if (m.choiceLock && p.isActive) {
+        p.volatiles['choicelock'] = battle.initEffectState({ id: 'choicelock', target: p, move: PS.toID(m.choiceLock) } as any);
+      }
+    });
+    if (req.megaUsed?.[sid]) for (const p of side.pokemon) p.canMegaEvo = false;
+    side.pokemonLeft = side.pokemon.filter((p: any) => !p.fainted).length;
+    if (side.active[0]?.fainted) throw new Error(`${sid}의 출전 포켓몬이 기절 상태다 (교체를 먼저 정한다)`);
+  }
+  const f = req.field ?? {};
+  const w = WEATHER_IDS[f.weather ?? ''] ?? '';
+  battle.field.weather = w;
+  battle.field.weatherState = battle.initEffectState(w ? { id: w, duration: Math.max(1, f.weatherTurns ?? 5) } as any : { id: '' });
+  const t = TERRAIN_IDS[f.terrain ?? ''] ?? '';
+  battle.field.terrain = t;
+  battle.field.terrainState = battle.initEffectState(t ? { id: t, duration: Math.max(1, f.terrainTurns ?? 5) } as any : { id: '' });
+  if (req.turn) battle.turn = req.turn;
+  // 덮어쓴 상태로 기술 막기(구애 고정 등)와 갇힘을 다시 판정한다 (Showdown endTurn과 같은 순서)
+  for (const side of battle.sides) {
+    for (const p of side.active) {
+      if (!p || p.fainted) continue;
+      p.maybeDisabled = false;
+      p.maybeLocked = false;
+      for (const slot of p.moveSlots) { slot.disabled = false; slot.disabledSource = ''; }
+      battle.runEvent('DisableMove', p);
+      p.trapped = p.maybeTrapped = false;
+      battle.runEvent('TrapPokemon', p);
+    }
+  }
+  battle.makeRequest('move');
+  return view(battle);
+}
+
+// ---------- /stats ----------
+// 세트의 실제 능력치(레벨 50, Stat Points). 메가면 메가 폼 기준. 믿음 상태가 파티클마다 한 번 계산해 둔다.
+export function stats(req: { set: any; mega?: boolean }) {
+  const set = { ...req.set, level: 50, moves: req.set.moves?.length ? req.set.moves : ['splash'] };
+  const battle = new PS.Battle({ formatid: 'gen9championscustomgame', seed: 'sodium,00000000000000000000000000000000',
+    p1: { name: 'a', team: [set] }, p2: { name: 'b', team: [set] } });
+  battle.choose('p1', 'team 1');
+  battle.choose('p2', 'team 1');
+  const m = battle.p1.active[0];
+  if (req.mega) {
+    if (!battle.actions.canMegaEvo(m)) throw new Error(`${m.species.name}은(는) 지닌 도구로 메가진화할 수 없다`);
+    battle.actions.runMegaEvo(m);
+  }
+  return { species: m.species.name, hp: m.maxhp, atk: m.storedStats.atk, def: m.storedStats.def, spa: m.storedStats.spa,
+    spd: m.storedStats.spd, spe: m.storedStats.spe, ability: m.ability, types: m.getTypes() };
+}
+
+// ---------- /bot_choice ----------
+// 주어진 상태에서 기준선 봇이 고를 선택 (상대 모델, 검증 대전의 상대). policy: maxdamage(기본) | random
+export function botChoice(req: { state: any; side: SideId; policy?: 'maxdamage' | 'random'; seed?: string }) {
+  const battle = load(req.state);
+  const side = battle.getSide(req.side);
+  const rq = side.activeRequest;
+  if (!rq || rq.wait) return { choice: null };
+  const rng = mulberry32(parseInt(toPsSeed(req.seed ?? 'bot').slice(7, 15), 16));
+  const c = req.policy === 'random' ? randomChoice(rq, rng) : maxDamageChoice(battle, side, rng);
+  return { choice: c };
+}

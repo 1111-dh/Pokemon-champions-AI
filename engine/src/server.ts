@@ -12,6 +12,9 @@ const ROUTES: Record<string, (req: any) => unknown> = {
   '/random_team': E.randomTeam,
   '/damage': E.damage,
   '/matchup_fast': E.matchupFast,
+  '/build_state': E.buildState,
+  '/stats': E.stats,
+  '/bot_choice': E.botChoice,
 };
 
 function runOne(fn: (req: any) => unknown, body: any) {
