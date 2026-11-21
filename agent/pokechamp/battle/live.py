@@ -22,7 +22,7 @@ from pokechamp.data.db import active_version
 from pokechamp.data.static.names import to_id
 from pokechamp.input.battle_text import STAT_KO, STATUS_KO, TERRAIN_KO, WEATHER_KO, BattleText
 from pokechamp.teambuild.search import Names
-from pokechamp.web.battle import sprite_id
+from pokechamp.web.sprites import sprite_id
 
 
 # 등장할 때 발동하는 특성 (자동 처리). 위협은 상대 공격 −1, 날씨·필드 특성은 날씨·필드를 깐다.

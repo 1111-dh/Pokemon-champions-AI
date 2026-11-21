@@ -1,4 +1,4 @@
-// 포챔 보조 AI 개발 콘솔. 빌드 도구 없이 쓰는 바닐라 JS.
+// 포챔 보조 AI 웹 화면. 빌드 도구 없이 쓰는 바닐라 JS.
 "use strict";
 
 const TYPE_KO = {
@@ -66,14 +66,19 @@ function showTab(name) {
 }
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
+// 엔진 상태: 평소에는 보이지 않고, 꺼져 있을 때만 상단에 안내한다 (자세한 상태는 개발 현황 탭)
 async function loadEngine() {
   const pill = $("#engine-pill");
-  try {
-    const e = await api("/api/engine");
-    pill.textContent = e.up ? "엔진 연결됨" : "엔진 꺼짐";
-    pill.className = `pill ${e.up ? "up" : "down"}`;
-  } catch { pill.textContent = "엔진 꺼짐"; pill.className = "pill down"; }
+  let up = false;
+  try { up = (await api("/api/engine")).up; } catch { up = false; }
+  pill.textContent = up ? "엔진 연결됨" : "엔진 꺼짐";
+  pill.className = `pill ${up ? "up" : "down"}`;
+  $("#engine-alert").hidden = up;
+  return up;
 }
+$("#engine-retry").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+  toast((await loadEngine()) ? "엔진에 연결했습니다." : "아직 엔진에 연결되지 않았습니다.");
+}));
 
 // ---------------- 진행 현황 ----------------
 let progress = null;
@@ -174,113 +179,7 @@ $("#run-selfplay").addEventListener("click", (ev) => withBusy(ev.currentTarget, 
     `${r.finished}/${r.games}판 완료, 오류 ${r.errors}건, 선공측 ${r.p1_wins}승 ${r.p2_wins}패, 턴 중앙값 ${r.turns_median}, ${r.seconds}초 (시드 ${r.seed})`;
 }));
 
-// ---------------- 배틀 해보기 ----------------
-let battle = null;
-let picks = [];
-
-$("#battle-new").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
-  battle = await api("/api/battle/new", { seed: $("#battle-seed").value.trim() });
-  picks = [];
-  $("#battle-empty").hidden = true;
-  $("#battle").hidden = false;
-  renderBattle();
-}));
-
-async function act(choice, btn) {
-  await withBusy(btn, async () => {
-    battle = await api("/api/battle/act", { id: battle.id, choice });
-    renderBattle();
-  });
-}
-
 function hpClass(pct) { return pct > 50 ? "" : pct > 20 ? "mid" : "lo"; }
-
-function activeCard(m, mine) {
-  if (!m) return `<p class="muted card-empty">${mine ? "선출을 고르면 선봉이 나옵니다." : "아직 나오지 않았습니다."}</p>`;
-  const pct = mine ? (m.max_hp ? Math.floor((100 * m.hp) / m.max_hp) : 0) : (m.hp_pct ?? 100);
-  const hpText = mine ? `${m.hp ?? 0} / ${m.max_hp ?? "-"}` : `${pct}%`;
-  const extra = mine
-    ? `${esc(m.ability)} · ${esc(m.item) || "도구 없음"}`
-    : [m.ability && `특성 ${esc(m.ability)}`, m.item && `도구 ${esc(m.item)}`, m.moves.length && `본 기술 ${m.moves.map(esc).join(", ")}`].filter(Boolean).join(" / ") || "공개된 정보 없음";
-  return `${sprite(m.sprite)}<div>
-    <div class="nm">${esc(m.name_ko)}${m.status ? ` <span class="state-badge warn">${esc(m.status)}</span>` : ""}</div>
-    ${typeChips(m.types)}
-    <div class="hp ${hpClass(pct)}" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="HP"><i style="width:${pct}%"></i></div>
-    <div class="hp-text"><span>HP</span><span>${hpText}</span></div>
-    <div class="info-line">${extra}</div></div>`;
-}
-
-function renderBattle() {
-  const b = battle;
-  const meActive = b.mine.find((m) => m.active && b.phase !== "team");
-  const oppActive = b.opp.find((o) => o.active);
-  $("#opp-active").innerHTML = activeCard(oppActive, false);
-  $("#me-active").innerHTML = activeCard(meActive, true);
-
-  $("#opp-roster").innerHTML = b.opp.map((o) => `<div class="mon-chip ${o.fainted ? "fainted" : ""} ${o.active ? "active" : ""} ${o.revealed ? "" : "unseen"}"
-      title="${o.revealed ? "나온 포켓몬" : "아직 안 나온 포켓몬 (선출됐는지 모름)"}">
-      ${sprite(o.sprite)}<span class="nm">${esc(o.name_ko)}</span>
-      ${o.revealed ? `<div class="mini-hp"><i style="width:${o.hp_pct ?? 100}%"></i></div>` : ""}</div>`).join("");
-
-  if (b.phase === "team") {
-    $("#me-roster").innerHTML = b.mine.map((m) => {
-      const order = picks.indexOf(m.slot);
-      return `<button class="mon-chip" data-slot="${m.slot}" aria-pressed="${order >= 0}" title="${esc(m.moves.join(", "))}">
-        ${order >= 0 ? `<span class="pick-order">${order === 0 ? "선봉" : order + 1}</span>` : ""}
-        ${sprite(m.sprite)}<span class="nm">${esc(m.name_ko)}</span></button>`;
-    }).join("");
-    document.querySelectorAll("#me-roster button").forEach((btn) => btn.addEventListener("click", () => {
-      const slot = Number(btn.dataset.slot);
-      picks = picks.includes(slot) ? picks.filter((x) => x !== slot) : picks.length < 3 ? [...picks, slot] : picks;
-      renderBattle();
-    }));
-  } else {
-    $("#me-roster").innerHTML = b.mine.map((m) => {
-      const pct = m.max_hp ? Math.floor((100 * m.hp) / m.max_hp) : 0;
-      return `<div class="mon-chip ${m.hp === 0 ? "fainted" : ""} ${m.active ? "active" : ""}" title="${esc(m.moves.join(", "))}">
-        ${sprite(m.sprite)}<span class="nm">${esc(m.name_ko)}</span><div class="mini-hp"><i style="width:${pct}%"></i></div></div>`;
-    }).join("");
-  }
-  renderActions();
-  renderLog();
-}
-
-function renderActions() {
-  const b = battle;
-  const area = $("#action-area");
-  if (b.phase === "ended") {
-    area.innerHTML = `<p class="result-banner">${b.winner === "p1" ? "이겼습니다" : b.winner === "p2" ? "졌습니다" : "무승부"}</p>
-      <p class="muted">${b.turn}턴, 시드 ${esc(b.seed)}. 같은 시드로 다시 하면 같은 팀으로 시작합니다.</p>`;
-    return;
-  }
-  if (b.phase === "team") {
-    const lead = picks[0];
-    const rest = picks.slice(1).sort((x, y) => x - y);
-    const choice = `team ${[lead, ...rest].join("")}`;
-    area.innerHTML = `<h3>선출 3마리를 고르세요</h3>
-      <p class="muted">내 포켓몬을 누른 순서대로 정해지고, 처음 누른 포켓몬이 선봉입니다. 메가스톤을 든 포켓몬은 한 마리만 넣는 것이 운용 규칙입니다.</p>
-      <div class="run-row"><button class="btn btn-primary" id="confirm-team" ${picks.length === 3 ? "" : "disabled"}>이 순서로 선출</button>
-      <span class="muted">${picks.length}/3</span></div>`;
-    $("#confirm-team").addEventListener("click", (ev) => act(choice, ev.currentTarget));
-    return;
-  }
-  const title = b.phase === "switch" ? "내보낼 포켓몬을 고르세요" : `${b.turn}턴, 행동을 고르세요`;
-  area.innerHTML = `<h3>${title}</h3><div class="actions">${b.actions.map((a, i) => {
-    if (a.kind === "move") {
-      const sub = [CATEGORY_KO[a.category] || "", TYPE_KO[a.type] || "", a.pp != null ? `PP ${a.pp}/${a.maxpp}` : ""].filter(Boolean).join(" · ");
-      return `<button class="act ${a.mega ? "mega" : ""}" data-i="${i}" style="--tc:${TYPE_COLOR[a.type] || "var(--line)"}">${esc(a.label)}<span class="sub">${sub}</span></button>`;
-    }
-    return `<button class="act" data-i="${i}">${esc(a.label)}<span class="sub">교체</span></button>`;
-  }).join("")}</div>`;
-  area.querySelectorAll(".act").forEach((btn) => btn.addEventListener("click", () => act(b.actions[Number(btn.dataset.i)].choice, btn)));
-}
-
-function renderLog() {
-  const log = $("#battle-log");
-  log.innerHTML = battle.events.map((e) => `<li class="${e.kind}">${esc(e.text)}</li>`).join("");
-  log.scrollTop = log.scrollHeight;
-  $("#battle-turn").textContent = battle.turn ? `${battle.turn}턴` : "선출 단계";
-}
 
 // ---------------- 도감 ----------------
 let dex = [];
@@ -341,7 +240,7 @@ async function showDex(id) {
   } catch (e) { box.innerHTML = `<p>${esc(e.message)}</p>`; }
 }
 
-// ---------------- 팀 검증 ----------------
+// ---------------- 내 팀 ----------------
 $("#team-random").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
   const r = await api("/api/team/random", {});
   $("#team-text").value = r.text.trim();
@@ -654,74 +553,7 @@ $("#rec-run").addEventListener("click", (ev) => withBusy(ev.currentTarget, async
   }
 }));
 
-// ---------------- 선출 추천 ----------------
-async function loadSelectTeams() {
-  try {
-    const teams = await api("/api/teams");
-    const cur = $("#sel-team").value;
-    $("#sel-team").innerHTML = teams.length
-      ? teams.map((t) => `<option value="${esc(t.name)}">${esc(t.name)} (${t.source === "manual" ? "직접 입력" : "추천"})</option>`).join("")
-      : `<option value="">저장한 팀이 없습니다</option>`;
-    if (cur && teams.some((t) => t.name === cur)) $("#sel-team").value = cur;
-  } catch (e) { toast(e.message); }
-}
 const pct0 = (x) => `${Math.round(x * 100)}%`;
-function selHtml(r) {
-  const m = r.matrix, o = r.oracle;
-  const opp = r.opponent.map((x) => `<li class="rec-mon">${sprite(x.sprite)}
-      <div><div class="nm">${esc(x.species)}</div>
-      <div class="muted">출전 ${pct0(x.bring_probability)}${x.mega_stone_probability ? ` · 메가스톤 ${pct0(x.mega_stone_probability)}` : ""}</div></div></li>`).join("");
-  const picks = r.picks.map((p) => `<tr>
-      <td><strong>${pct0(p.probability)}</strong><div class="bar"><span style="width:${(p.probability * 100).toFixed(1)}%"></span></div></td>
-      <td><div class="pick-mons">${p.sprites.map((sp, i) => sprite(sp, i === 0 ? "lead" : "")).join("")}</div>
-        <div>선봉 <strong>${esc(p.lead)}</strong> + ${esc(p.members.slice(1).join(", "))} <span class="muted">(슬롯 ${p.slots.join("·")})</span></div>
-        ${p.mega ? `<span class="state-badge">메가: ${esc(p.mega)}</span>` : ""}${p.opponent_model_best_response ? ` <span class="state-badge">상대 모델 최선 응수</span>` : ""}</td>
-      <td>${pct0(p.win_vs_equilibrium)} <span class="muted">/ ${pct0(p.win_vs_model)}</span></td>
-      <td class="muted">${p.strong.length ? `강함: ${esc(p.strong.join("·"))}` : ""}${p.weak.length ? `<br>불리: ${esc(p.weak.join("·"))}` : ""}</td></tr>`).join("");
-  const likely = r.opponent_likely_picks.map((x) => `<li>${pct0(x.probability)} · 선봉 ${esc(x.lead)} + ${esc(x.members.slice(1).join(", "))}</li>`).join("");
-  const budget = r.max_games != null ? `${r.max_games.toLocaleString()}판` : `${r.budget_s}초`;
-  return `
-    ${r.warnings.length ? `<div class="panel warn-box">${r.warnings.map((w) => `<p>${esc(w)}</p>`).join("")}</div>` : ""}
-    <div class="panel">
-      <div class="panel-head"><h2>추천 선출</h2><span class="muted">${esc(r.team)} · 시드 ${esc(r.seed)} · ${esc(r.freshness)}</span></div>
-      <p>이 확률대로 무작위로 고르세요. 전체 기대 승률 <strong>${pct1(r.expected_win_vs_equilibrium)}</strong> (상대가 균형으로 고를 때)
-        / ${pct1(r.expected_win_vs_model)} (상대 모델대로 고를 때).</p>
-      <table class="table"><thead><tr><th>확률</th><th>선출</th><th>예상 승률 <span class="muted">(균형 / 모델)</span></th><th>이유</th></tr></thead>
-        <tbody>${picks}</tbody></table>
-      <p class="muted">최종 확률 = ${pct0(1 - r.opponent_model_mix)} × 균형 해 + ${pct0(r.opponent_model_mix)} × 상대 모델 최선 응수.</p>
-    </div>
-    <div class="grid-2">
-      <div class="panel"><div class="panel-head"><h2>상대 6마리</h2></div><ul class="rec-list">${opp}</ul>
-        <p class="muted">출전 확률은 상대 균형 전략 기준, 메가스톤 확률은 세트 통계 기준입니다.</p></div>
-      <div class="stack">
-        <div class="panel"><div class="panel-head"><h2>상대 예상 선출</h2></div><ul class="plain">${likely || "<li class='muted'>-</li>"}</ul></div>
-        <div class="panel"><div class="panel-head"><h2>계산</h2></div>
-          <div class="kv">
-            <span class="k">시간</span><span>${r.elapsed_s}초 (예산 ${budget})</span>
-            <span class="k">3:3 시뮬레이션</span><span>${r.games.toLocaleString()}판${r.errors ? ` (오류 ${r.errors})` : ""}</span>
-            <span class="k">더블 오라클</span><span>${o.iterations}회 · ${o.converged ? "수렴" : "예산에서 멈춤 (수렴 전)"}</span>
-            <span class="k">보수 행렬</span><span>${m.size[0]}×${m.size[1]} 중 정밀 ${m.precise_cells}칸 (근사값만 ${pct0(m.approx_only_share)})</span>
-            <span class="k">후보</span><span>${m.candidates[0]}×${m.candidates[1]} · 정밀 칸 ${pct0(m.candidate_precise_share)}</span>
-            <span class="k">정밀값 비중</span><span>${pct0(m.weighted_precise_share)} <span class="muted">(균형 확률로 가중)</span></span>
-          </div>
-          <p class="muted">${esc(r.policy)}</p></div>
-      </div>
-    </div>
-    <details class="panel"><summary>글로 보기 (보수 행렬 포함)</summary><pre class="tail">${esc(r.text)}</pre></details>`;
-}
-$("#sel-run").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
-  if (!$("#sel-team").value) { toast("먼저 팀을 저장하세요."); return; }
-  $("#sel-result").innerHTML = `<div class="panel muted">계산하는 중입니다… (최대 ${$("#sel-budget").value}초)</div>`;
-  try {
-    const r = await api("/api/select", { team: $("#sel-team").value, opp: $("#sel-opp").value, seed: $("#sel-seed").value,
-      budget: Number($("#sel-budget").value) });
-    $("#sel-result").innerHTML = selHtml(r);
-  } catch (e) {
-    $("#sel-result").innerHTML = "";
-    throw e;
-  }
-}));
-document.querySelector('.tabs button[data-tab="select"]').addEventListener("click", loadSelectTeams);
 
 // ---------------- 실전 ----------------
 const live = { id: null, picks: [], data: null };
@@ -732,6 +564,8 @@ async function loadLiveTeams() {
     $("#live-team").innerHTML = teams.length ? teams.map((t) => `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join("")
       : `<option value="">저장한 팀이 없습니다</option>`;
     if (cur && teams.some((t) => t.name === cur)) $("#live-team").value = cur;
+    $("#live-team-hint").innerHTML = teams.length ? "팀은 '내 팀'이나 '파티 추천'에서 저장합니다."
+      : `먼저 팀을 저장하세요. <a href="#team" data-goto="team">내 팀에서 만들기</a>`;
   } catch (e) { toast(e.message); }
 }
 
@@ -1037,14 +871,16 @@ function bindLive(v) {
 }
 
 // ---------------- 복기 ----------------
+$("#battle-show-sim").addEventListener("change", loadBattles);
 async function loadBattles() {
   try {
-    const rows = await api("/api/battles");
+    const all = await api("/api/battles");
+    const rows = $("#battle-show-sim").checked ? all : all.filter((r) => r.source === "manual");
     $("#battle-list tbody").innerHTML = rows.length ? rows.map((r) => `<tr><td>${r.id}</td><td>${esc((r.played_at || "").slice(0, 16))}</td>
       <td>${r.source === "manual" ? "실제" : "자동"}</td><td>${esc({ win: "승", loss: "패", tie: "무", aborted: "중단" }[r.result] || "-")}</td>
       <td>${esc(r.opp.join(", "))}</td><td><button class="btn btn-sm" data-review="${r.id}">복기</button>
       <button class="btn btn-sm" data-bdel="${r.id}">삭제</button></td></tr>`).join("")
-      : `<tr><td colspan="6" class="muted">아직 기록이 없습니다.</td></tr>`;
+      : `<tr><td colspan="6" class="muted">아직 기록이 없습니다. 실전 탭에서 배틀을 끝내면 여기에 쌓입니다.</td></tr>`;
     document.querySelectorAll("[data-review]").forEach((b) => b.addEventListener("click", (ev) => withBusy(ev.currentTarget, () => runReview(b.dataset.review))));
     document.querySelectorAll("[data-bdel]").forEach((b) => b.addEventListener("click", async () => {
       if (!confirm(`배틀 기록 #${b.dataset.bdel}을(를) 지울까요? 되돌릴 수 없습니다.`)) return;
@@ -1091,5 +927,10 @@ $("#news-check").addEventListener("click", (ev) => withBusy(ev.currentTarget, as
 
 // ---------------- 시작 ----------------
 loadEngine();
-api("/api/progress").then((p) => { $("#branch-pill").textContent = `브랜치 ${p.git.branch}`; }).catch(() => {});
-showTab((location.hash || "#progress").slice(1));
+// 다른 탭으로 가는 안내 링크 (예: 팀이 없을 때 '내 팀에서 만들기')
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("[data-goto]");
+  if (a) { e.preventDefault(); showTab(a.dataset.goto); }
+});
+const startTab = (location.hash || "#live").slice(1);
+showTab(document.getElementById(`tab-${startTab}`) ? startTab : "live");

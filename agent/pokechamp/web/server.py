@@ -29,7 +29,7 @@ from pokechamp.paths import ENGINE_DIR, ROOT
 from pokechamp.status import status_data
 from pokechamp.input.team_text import FIELD_KO, NameIndex, TeamParseError, parse_team
 from pokechamp.teams.store import fill_defaults, list_teams, save_team, validate as validate_team
-from pokechamp.web.battle import Playground, sprite_id
+from pokechamp.web.sprites import sprite_id
 
 STATIC = Path(__file__).parent / "static"
 _lock = threading.Lock()  # SQLite 연결과 배틀 세션을 스레드 사이에서 보호
@@ -39,7 +39,6 @@ class App:
     def __init__(self, client: EngineClient | None = None):
         self.conn = connect(check_same_thread=False)  # 요청 스레드들이 _lock으로 순서를 지켜 쓴다
         self.client = client or EngineClient()
-        self.playground = Playground(self.conn, self.client)
         self.live: dict[str, Any] = {}       # 실전 세션 (id → LiveBattle)
         self.get_routes: dict[str, Callable[..., Any]] = {
             "/api/progress": self.progress,
@@ -53,12 +52,9 @@ class App:
             "/api/builder/species": self.builder_species,
         }
         self.post_routes: dict[str, Callable[[dict], Any]] = {
-            "/api/battle/new": lambda b: self.playground.new(b.get("seed") or None),
-            "/api/battle/act": lambda b: self.playground.act(b["id"], b["choice"]),
             "/api/team/validate": self.team_check,
             "/api/team/save": self.team_save,
             "/api/team/recommend": self.team_recommend,
-            "/api/select": self.select,
             "/api/review": self.review,
             "/api/live/new": self.live_new,
             "/api/live/start": lambda b: self._live(b).start([int(x) for x in b.get("slots", [])], str(b.get("opp_lead") or ""),
@@ -200,31 +196,6 @@ class App:
             save_team(self.conn, name, r["team"], "recommended", valid, problems if valid is not None else [],
                       replace=bool(b.get("replace")))
             r["saved_as"] = name
-        return json.loads(json.dumps(r, default=float))
-
-    def select(self, b: dict) -> dict:
-        """선출 추천 (PROJECT_PLAN 8절). 내 저장 팀 + 상대 6마리 이름 → 선출 확률. 시간 예산(기본 20초) 안에서 끝난다."""
-        from pokechamp.select.recommend import SelectError, Selector, parse_opponents
-        from pokechamp.select.report import text_report
-        from pokechamp.teams.store import load_team
-
-        try:
-            t = load_team(self.conn, str(b.get("team") or ""))
-            opp, notes = parse_opponents(self.conn, str(b.get("opp") or "").replace("\n", ","))
-            budget = float(b["budget"]) if b.get("budget") else None
-            seed = str(b.get("seed")).strip() or None if b.get("seed") else None
-            r = Selector(self.conn, self.client).run(t["team"], opp, seed=seed, budget_s=budget, team_problems=t["problems"])
-        except SelectError as e:
-            raise ValueError(str(e)) from e
-        r["warnings"] = notes + r["warnings"]
-        if any(x.get("filled") for x in t["team"]):
-            r["warnings"].append("내 팀에 통계 기본값으로 채운 항목이 있다")
-        r["team"], r["team_source"] = t["name"], t["source"]
-        for p in r["picks"]:
-            p["sprites"] = [sprite_id(x) for x in p["member_species"]]
-        for o in r["opponent"]:
-            o["sprite"] = sprite_id(o["name_en"])
-        r["text"] = text_report(r, show_matrix=True)
         return json.loads(json.dumps(r, default=float))
 
     # ---------- 실전 (배틀 중 추천) ----------
