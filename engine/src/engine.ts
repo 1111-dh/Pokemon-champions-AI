@@ -324,3 +324,24 @@ export function botChoice(req: { state: any; side: SideId; policy?: 'maxdamage' 
   const c = req.policy === 'random' ? randomChoice(rq, rng) : maxDamageChoice(battle, side, rng);
   return { choice: c };
 }
+
+// ---------- /moves_info ----------
+// 웹 실전 입력 폼이 기술의 확정 효과를 자동으로 넣는 데 쓴다: 우선도, 분류, 자기 랭크 변화, 상대 랭크 변화(확정분만).
+export function movesInfo(req: { moves: string[] }) {
+  const dex = PS.Dex.forFormat(PS.Dex.formats.get(FORMAT_ID));
+  const out: Record<string, any> = {};
+  for (const id of req.moves) {
+    const m = dex.moves.get(id);
+    if (!m.exists) continue;
+    const self: Record<string, number> = {}, target: Record<string, number> = {};
+    if (m.category === 'Status' && m.boosts) Object.assign(m.target === 'self' || m.target === 'adjacentAllyOrSelf' ? self : target, m.boosts);
+    if (m.self?.boosts) Object.assign(self, m.self.boosts);
+    if (m.secondary?.chance === 100) {
+      if (m.secondary.boosts) Object.assign(target, m.secondary.boosts);
+      if (m.secondary.self?.boosts) Object.assign(self, m.secondary.self.boosts);
+    }
+    out[m.id] = { priority: m.priority, category: m.category, selfBoosts: self, targetBoosts: target,
+      multihit: !!m.multihit, selfdestruct: !!m.selfdestruct };
+  }
+  return out;
+}

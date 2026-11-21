@@ -360,17 +360,47 @@ $("#team-save").addEventListener("click", (ev) => withBusy(ev.currentTarget, asy
   const text = $("#team-text").value.trim();
   const name = $("#team-name").value.trim();
   if (!text || !name) { toast("팀 텍스트와 이름을 넣으세요."); return; }
-  const r = await api("/api/team/save", { text, name, fill: $("#team-fill").checked, keep_empty: $("#team-keep").checked });
+  const r = await api("/api/team/save", { text, name, fill: $("#team-fill").checked, keep_empty: $("#team-keep").checked,
+    replace: $("#team-replace").checked });
   $("#team-result").innerHTML = teamResultHtml(r, r.name);
   loadTeams();
 }));
 async function loadTeams() {
   try {
     const teams = await api("/api/teams");
-    $("#team-list").innerHTML = teams.length ? teams.map((t) => `<li><strong>${esc(t.name)}</strong>
-      <span class="muted">${t.source === "manual" ? "직접 입력" : "추천"}</span>
-      <span>${t.team.map((x) => esc(x.species)).join(", ")}</span></li>`).join("") : `<li class="muted">아직 없습니다.</li>`;
+    $("#team-list").innerHTML = teams.length ? teams.map((t) => `<li class="team-row">
+      <div><strong>${esc(t.name)}</strong> <span class="muted">${t.source === "manual" ? "직접 입력" : "추천"}
+        ${t.valid === 0 ? ` · ⚠️ 경고 ${t.problems.length}개` : ""}</span>
+        <div class="pick-mons">${t.team.map((x) => sprite(spriteOf(x.species))).join("")}</div></div>
+      <div class="team-actions"><button class="btn btn-sm" data-tshow="${esc(t.name)}">보기</button>
+        <button class="btn btn-sm" data-tload="${esc(t.name)}">편집으로 불러오기</button>
+        <button class="btn btn-sm" data-tdel="${esc(t.name)}">삭제</button></div>
+      <div class="team-detail" id="tdetail-${esc(t.name)}"></div></li>`).join("") : `<li class="muted">아직 없습니다. 왼쪽에 팀을 붙여 넣고 이름을 정해 저장하세요.</li>`;
+    document.querySelectorAll("[data-tshow]").forEach((b) => b.addEventListener("click", async () => {
+      const box = document.getElementById(`tdetail-${b.dataset.tshow}`);
+      if (box.innerHTML) { box.innerHTML = ""; return; }
+      const d = await api("/api/team/show", { name: b.dataset.tshow });
+      box.innerHTML = `<ul class="plain small">${d.members.map((m) => `<li>${esc(m.name)}${m.item ? ` @ ${esc(m.item)}` : ""}
+        ${m.filled.length ? ` <span class="muted">(통계 기본값으로 채움: ${esc(m.filled.join(", "))})</span>` : ""}</li>`).join("")}</ul>
+        ${d.problems.length ? `<div class="warn-box">${d.problems.map((p) => `<p>${esc(p)}</p>`).join("")}</div>` : ""}
+        <pre class="tail">${esc(d.export)}</pre>`;
+    }));
+    document.querySelectorAll("[data-tload]").forEach((b) => b.addEventListener("click", async () => {
+      const d = await api("/api/team/show", { name: b.dataset.tload });
+      $("#team-text").value = d.export; $("#team-name").value = d.name; $("#team-replace").checked = true;
+      toast("왼쪽 칸에 불러왔습니다. 고친 뒤 '팀 저장'을 누르면 덮어씁니다.");
+    }));
+    document.querySelectorAll("[data-tdel]").forEach((b) => b.addEventListener("click", async () => {
+      if (!confirm(`'${b.dataset.tdel}' 팀을 지울까요? 되돌릴 수 없습니다.`)) return;
+      await api("/api/team/delete", { name: b.dataset.tdel });
+      toast("지웠습니다."); loadTeams();
+    }));
   } catch (e) { $("#team-list").textContent = e.message; }
+}
+function spriteOf(name) {
+  const base = String(name).split("-")[0], forme = String(name).split("-").slice(1).join("");
+  const clean = (x) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return clean(base) + (forme ? "-" + clean(forme) : "");
 }
 
 // ---------------- 파티 추천 ----------------
@@ -520,15 +550,291 @@ $("#sel-run").addEventListener("click", (ev) => withBusy(ev.currentTarget, async
 }));
 document.querySelector('.tabs button[data-tab="select"]').addEventListener("click", loadSelectTeams);
 
+// ---------------- 실전 ----------------
+const live = { id: null, picks: [], data: null };
+async function loadLiveTeams() {
+  try {
+    const teams = await api("/api/teams");
+    const cur = $("#live-team").value;
+    $("#live-team").innerHTML = teams.length ? teams.map((t) => `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join("")
+      : `<option value="">저장한 팀이 없습니다</option>`;
+    if (cur && teams.some((t) => t.name === cur)) $("#live-team").value = cur;
+  } catch (e) { toast(e.message); }
+}
+document.querySelector('.tabs button[data-tab="live"]').addEventListener("click", loadLiveTeams);
+
+$("#live-select").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+  if (!$("#live-team").value) { toast("먼저 팀을 저장하세요."); return; }
+  $("#live-select-result").innerHTML = `<div class="muted">선출을 계산하는 중입니다… (최대 20초)</div>`;
+  const r = await api("/api/live/new", { team: $("#live-team").value, opp: $("#live-opp").value });
+  live.id = r.id; live.picks = []; live.data = r; live.lead = null; live.leadOpts = null; live.leadEntry = [];
+  $("#live-battle").innerHTML = "";
+  renderLiveSetup();
+}));
+
+function renderLiveSetup() {
+  const r = live.data, s = r.selection;
+  const picks = s.picks.slice(0, 4).map((p) => `<li><strong>${pct0(p.probability)}</strong> 선봉 ${esc(p.lead)} + ${esc(p.members.slice(1).join(", "))}
+      <span class="muted">(슬롯 ${p.slots.join("·")}${p.mega ? ` · 메가 ${esc(p.mega)}` : ""}) · 예상 승률 ${pct0(p.win_vs_equilibrium)}</span>
+      <button class="btn" data-usepick="${p.slots.join(",")}">이대로</button></li>`).join("");
+  const mons = r.mine.map((m) => {
+    const k = live.picks.indexOf(m.slot);
+    return `<button class="pick-btn ${k >= 0 ? "on" : ""}" data-slot="${m.slot}">${sprite(m.sprite)}<span>${esc(m.name)}</span>
+      ${k >= 0 ? `<b class="order">${k === 0 ? "선봉" : k + 1}</b>` : ""}</button>`;
+  }).join("");
+  $("#live-select-result").innerHTML = `
+    ${r.notes.length ? `<div class="warn-box panel">${r.notes.map((n) => `<p>${esc(n)}</p>`).join("")}</div>` : ""}
+    <div class="grid-2">
+      <div><h3>추천 선출 <span class="muted">(이 확률대로 고르세요 · 전체 기대 승률 ${pct1(s.expected_win_vs_equilibrium)})</span></h3><ul class="plain">${picks}</ul></div>
+      <div><h3>2. 실제로 낸 선출 <span class="muted">(누른 순서 = 출전 순서, 첫 번째가 선봉)</span></h3>
+        <div class="pick-grid">${mons}</div>
+        <label>상대 선봉 <select id="live-lead" class="input">${r.opp.map((o) => `<option value="${esc(o.id)}" ${live.lead === o.id ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select></label>
+        <div id="live-lead-entry">${entryBoxes(live.leadOpts, live.leadEntry || [], "data-leadentry")}</div>
+        <div class="run-row"><button class="btn btn-primary" id="live-start" ${live.picks.length === 3 ? "" : "disabled"}>배틀 시작</button>
+          <button class="btn" id="live-clear">선출 다시 고르기</button></div></div>
+    </div>`;
+  document.querySelectorAll("[data-slot]").forEach((b) => b.addEventListener("click", () => {
+    const s = Number(b.dataset.slot), k = live.picks.indexOf(s);
+    if (k >= 0) live.picks.splice(k, 1); else if (live.picks.length < 3) live.picks.push(s);
+    renderLiveSetup();
+  }));
+  document.querySelectorAll("[data-usepick]").forEach((b) => b.addEventListener("click", () => {
+    live.picks = b.dataset.usepick.split(",").map(Number); renderLiveSetup();
+  }));
+  $("#live-clear").addEventListener("click", () => { live.picks = []; renderLiveSetup(); });
+  const loadLead = async () => {
+    live.lead = $("#live-lead").value;
+    live.leadOpts = await api("/api/live/entry", { id: live.id, species: live.lead });
+    live.leadEntry = defaults(live.leadOpts);
+    $("#live-lead-entry").innerHTML = entryBoxes(live.leadOpts, live.leadEntry, "data-leadentry");
+    bindLead();
+  };
+  const bindLead = () => document.querySelectorAll("[data-leadentry]").forEach((c) => c.addEventListener("change", () => {
+    live.leadEntry = [...document.querySelectorAll("[data-leadentry]")].filter((x) => x.checked).map((x) => x.dataset.leadentry);
+  }));
+  $("#live-lead").addEventListener("change", loadLead);
+  if (!live.leadOpts || live.lead !== $("#live-lead").value) loadLead(); else bindLead();
+  $("#live-start").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+    const v = await api("/api/live/start", { id: live.id, slots: live.picks, opp_lead: $("#live-lead").value, opp_lead_entry: live.leadEntry || [] });
+    renderLive(v);
+  }));
+}
+
+function hpBar(pct) {
+  const p = Math.max(0, Math.min(100, pct || 0));
+  return `<div class="hpbar"><span class="${hpClass(p)}" style="width:${p}%"></span></div>`;
+}
+function monCard(m, mine) {
+  const boosts = Object.entries(m.boosts || {}).map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`).join(" ");
+  const hp = m.fainted ? "기절" : mine && m.hp_abs != null ? `${m.hp_abs}/${m.hp_max}` : `${Math.round(m.hp)}%`;
+  return `<div class="live-mon ${m.active ? "active" : ""} ${m.fainted ? "fnt" : ""} ${!mine && !m.seen ? "unseen" : ""}">
+    ${sprite(m.sprite)}<div class="body"><div class="nm">${esc(m.name)}${m.mega ? ` <span class="state-badge">메가</span>` : ""}
+      ${m.active ? ` <span class="state-badge">출전</span>` : ""}</div>
+    ${mine || m.seen ? `${hpBar(m.fainted ? 0 : m.hp)}<div class="muted">${hp}${m.status ? ` · ${esc(m.status)}` : ""}${boosts ? ` · ${esc(boosts)}` : ""}</div>` : `<div class="muted">아직 안 나옴</div>`}
+    ${m.moves && m.moves.length ? `<div class="muted small">${esc(m.moves.join(", "))}</div>` : ""}
+    ${!mine && (m.item || m.ability) ? `<div class="muted small">${esc([m.item && (m.item + (m.item_consumed ? "(사용)" : "")), m.ability].filter(Boolean).join(" · "))}</div>` : ""}</div></div>`;
+}
+function entryBoxes(opts, chosen, attr) {
+  if (!opts || !opts.length) return "";
+  return `<div class="entry-box"><span class="muted">나올 때 뜬 메시지:</span> ${opts.map((o) => `<label class="check"><input type="checkbox" ${attr}="${esc(o.key)}"
+    ${chosen.includes(o.key) ? "checked" : ""}> ${esc(o.name)} <span class="muted">(${pct0(o.p)})</span></label>`).join(" ")}
+    <span class="muted small">위협은 내 공격 −1, 날씨·필드 특성은 날씨·필드, 풍선은 맞으면 터짐까지 자동으로 넣습니다.</span></div>`;
+}
+const defaults = (opts) => (opts || []).filter((o) => o.default).map((o) => o.key);
+const STATUS_OPTS = [["", "-"], ["brn", "화상"], ["par", "마비"], ["slp", "잠듦"], ["frz", "얼음"], ["psn", "독"], ["tox", "맹독"]];
+const WEATHER_OPTS = [["", "-"], ["sun", "쾌청"], ["rain", "비"], ["sand", "모래바람"], ["snow", "설경"], ["none", "날씨 끝"]];
+function freshForm(v) {
+  const f = v.form || {};
+  const best = v.recommendation && v.recommendation.options.find((o) => o.probability > 0);
+  return { first: null, me: best && best.action ? { ...best.action } : { kind: null }, opp: { kind: null },
+    my_hp: f.my_hp ?? "", opp_hp: f.opp_hp != null ? Math.round(f.opp_hp) : "", edited: { me: false, opp: false }, extras: {} };
+}
+function renderLive(v) {
+  live.view = v;
+  if (!live.form || live.form.turn !== v.turn || live.form.phase !== v.phase) { live.form = freshForm(v); live.form.turn = v.turn; live.form.phase = v.phase; }
+  const rec = v.recommendation, f = v.form || {}, F = live.form;
+  const field = [v.weather && `날씨 ${v.weather.name}${v.weather.remaining ? ` (${v.weather.remaining[0]}${v.weather.remaining[1] !== v.weather.remaining[0] ? "~" + v.weather.remaining[1] : ""}턴)` : ""}`,
+    v.terrain && `필드 ${v.terrain.name}${v.terrain.remaining ? ` (${v.terrain.remaining[0]}턴)` : ""}`].filter(Boolean).join(" · ");
+  const sel = (cond) => (cond ? " on" : "");
+  const steps = v.phase === "replace" ? `<span class="step">① 행동</span> → <span class="step">② 결과</span> → <span class="step now">③ 기절 교체</span>`
+    : `<span class="step now">① 행동</span> → <span class="step">② 결과</span> → <span class="step">③ 기절 교체(필요할 때)</span>`;
+  const recHtml = rec ? `<div class="panel rec-card"><div class="panel-head"><h2>추천: ${esc(rec.best)}</h2>
+      <span class="muted">예상 승률 ${pct0(rec.win)} · ${rec.seconds}초</span></div>
+      <table class="table"><tbody>${rec.options.map((o) => `<tr><td>${esc(o.label)}${o.probability > 0 ? " <strong>← 추천</strong>" : ""}</td>
+        <td style="width:40%"><div class="bar"><span style="width:${(o.value * 100).toFixed(0)}%"></span></div></td><td>${pct0(o.value)}</td></tr>`).join("")}</tbody></table>
+      <button class="btn btn-sm" id="live-why">왜?</button><div id="live-why-box" class="muted"></div></div>` : "";
+  let inputHtml = "";
+  if (v.phase === "over") {
+    inputHtml = `<div class="panel"><p>배틀이 끝났습니다. 아래에서 결과를 골라 끝내세요.</p></div>`;
+  } else if (v.phase === "replace") {
+    const need = f.need_replace || {};
+    inputHtml = `<div class="panel"><div class="panel-head"><h2>기절 교체</h2><span class="muted">${steps}</span></div>
+      ${need.opp ? `<p><strong>상대가 다음에 낸 포켓몬은?</strong></p><div class="pick-grid">${f.opp_bench.map((b) => `<button class="pick-btn${sel(F.opp_rep === b.id)}" data-opprep="${esc(b.id)}">${sprite(b.sprite)}<span>${esc(b.name)}${b.seen ? "" : " <span class='muted'>(처음)</span>"}</span></button>`).join("")}</div>
+        ${F.opp_rep ? entryBoxes((f.opp_bench.find((b) => b.id === F.opp_rep) || {}).entry, F.opp_rep_entry || [], "data-repentry") : ""}` : ""}
+      ${need.me ? `<p><strong>내가 다음에 낸 포켓몬은?</strong> <span class="muted">${rec ? `추천: ${esc(rec.best)}` : ""}</span></p><div class="pick-grid">${f.my_bench.map((b) => `<button class="pick-btn${sel(F.my_rep === b.id)}" data-myrep="${esc(b.id)}">${sprite(b.sprite)}<span>${esc(b.name)}</span></button>`).join("")}</div>` : ""}
+      <div class="run-row"><button class="btn btn-primary" id="live-replace" ${(need.opp && !F.opp_rep) || (need.me && !F.my_rep) ? "disabled" : ""}>교체 적용하고 다음 턴</button></div></div>`;
+  } else {
+    const myMoves = (f.my_moves || []).map((m) => `<button class="opt${sel(F.me.kind === "move" && F.me.move === m.id)}" data-my="move:${esc(m.id)}">${esc(m.name)}</button>`).join("");
+    const mySw = (f.my_bench || []).map((b) => `<button class="opt${sel(F.me.kind === "switch" && F.me.species === b.id)}" data-my="switch:${esc(b.id)}">↔ ${esc(b.name)}</button>`).join("");
+    const oppMoves = (f.opp_moves || []).map((m) => `<button class="opt${sel(F.opp.kind === "move" && F.opp.move === m.id)}${m.seen ? " seen" : ""}" data-opp="move:${esc(m.id)}" title="${m.seen ? "이미 본 기술" : `추정 ${pct0(m.p)}`}">${esc(m.name)}</button>`).join("");
+    const oppSw = (f.opp_bench || []).map((b) => `<button class="opt${sel(F.opp.kind === "switch" && F.opp.species === b.id)}" data-opp="switch:${esc(b.id)}">↔ ${esc(b.name)}</button>`).join("");
+    const ready = F.first && F.me.kind && F.opp.kind;
+    inputHtml = `<div class="panel live-form"><div class="panel-head"><h2>${v.turn}턴 입력</h2><span class="muted">${steps}</span></div>
+      <div class="frow"><span class="flabel">먼저 움직인 쪽</span>
+        <button class="opt${sel(F.first === "me")}" data-first="me">나</button><button class="opt${sel(F.first === "opp")}" data-first="opp">상대</button>
+        <span class="muted">게임에서 먼저 행동한 쪽 (교체는 항상 먼저라 아무거나 골라도 됩니다)</span></div>
+      <div class="frow"><span class="flabel">내 행동</span>${myMoves}
+        ${f.my_can_mega ? `<label class="check"><input type="checkbox" id="f-mymega" ${F.me.mega ? "checked" : ""}> 메가진화</label>` : ""}
+        <span class="sep"></span>${mySw}<button class="opt${sel(F.me.kind === "none")}" data-my="none:">못 움직임</button></div>
+      <div class="frow"><span class="flabel">상대 행동</span>${oppMoves}
+        <input id="f-oppother" class="input input-sm" list="f-oppmoves" placeholder="다른 기술" value="${F.opp.kind === "move" && !(f.opp_moves || []).some((m) => m.id === F.opp.move) ? esc(F.opp.move || "") : ""}">
+        <datalist id="f-oppmoves">${(f.opp_all_moves || []).map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
+        ${f.opp_can_mega ? `<label class="check"><input type="checkbox" id="f-oppmega" ${F.opp.mega ? "checked" : ""}> 메가진화</label>` : ""}
+        <span class="sep"></span>${oppSw}<button class="opt${sel(F.opp.kind === "none")}" data-opp="none:">못 움직임</button>
+        ${F.opp.kind === "switch" ? entryBoxes(((f.opp_bench || []).find((b) => b.id === F.opp.species) || {}).entry, F.opp.entry || [], "data-oppentry") : ""}</div>
+      <div class="frow"><span class="flabel">턴 끝 HP</span>
+        <label>내 HP <input id="f-myhp" class="input input-sm" type="number" min="0" value="${esc(String(F.my_hp))}"> / ${esc(String(f.my_hp_max || "?"))}</label>
+        <button class="btn btn-sm" data-hp="me:0">내 기절</button>
+        <label>상대 HP <input id="f-opphp" class="input input-sm" type="number" min="0" max="100" value="${esc(String(F.opp_hp))}">%</label>
+        <button class="btn btn-sm" data-hp="opp:0">상대 기절</button>
+        <span class="muted" id="f-est">${F.estimated ? "고른 기술로 예상한 값입니다. 게임 화면과 다르면 고치세요." : "행동을 고르면 예상 HP를 채웁니다."}</span></div>
+      <details class="frow" ${Object.values(F.extras).some(Boolean) ? "open" : ""}><summary>추가 사항 (있을 때만)</summary>
+        <div class="quick">
+          <label>내 상태이상 <select id="f-mystatus" class="input input-sm" data-x="me_status">${STATUS_OPTS.map(([k, n]) => `<option value="${k}" ${F.extras.me_status === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+          <label>상대 상태이상 <select id="f-oppstatus" class="input input-sm" data-x="opp_status">${STATUS_OPTS.map(([k, n]) => `<option value="${k}" ${F.extras.opp_status === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+          <label>상대 도구 발동 <input id="f-oppitem" class="input input-sm" data-x="opp_item" placeholder="기합의띠" value="${esc(F.extras.opp_item || "")}"></label>
+          <label>상대 특성 발동 <input id="f-oppability" class="input input-sm" data-x="opp_ability" placeholder="위협" value="${esc(F.extras.opp_ability || "")}"></label>
+          <label>날씨 변화 <select id="f-weather" class="input input-sm" data-x="weather">${WEATHER_OPTS.map(([k, n]) => `<option value="${k}" ${F.extras.weather === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+        </div><p class="muted">랭크 변화(칼춤, 용성군 등 기술의 확정 효과)와 HP 0이면 기절은 자동으로 넣습니다.</p></details>
+      <div id="live-preview" class="muted"></div>
+      <div class="run-row"><button class="btn btn-primary" id="live-turn" ${ready ? "" : "disabled"}>이번 턴 적용</button>
+        <span class="muted">${ready ? "" : "먼저 움직인 쪽, 내 행동, 상대 행동을 골라 주세요."}</span></div>
+      <details><summary>직접 입력 (고급)</summary>
+        <textarea id="live-input" class="input" rows="2" placeholder="예: 상대 선공 / 상대 지진 / 내 HP 120/181 / 상대 HP 40%"></textarea>
+        <div class="run-row"><button class="btn" id="live-preview-btn">해석 미리보기</button><button class="btn" id="live-apply">문장으로 적용</button></div></details></div>`;
+  }
+  $("#live-battle").innerHTML = `
+    <div class="panel"><div class="panel-head"><h2>${v.phase === "replace" ? "기절 교체" : v.phase === "over" ? "배틀 끝" : `${v.turn}턴`}</h2>
+      <span class="muted">${esc(field || "날씨·필드 없음")}${v.mega_used.me ? " · 내 메가 사용함" : ""}${v.mega_used.opp ? " · 상대 메가 사용함" : ""}</span></div>
+      <div class="grid-2"><div><h3>나</h3>${v.mine.map((m) => monCard(m, true)).join("")}</div>
+        <div><h3>상대</h3>${v.opp.map((m) => monCard(m, false)).join("")}</div></div></div>
+    ${v.phase === "replace" ? inputHtml + recHtml : recHtml + inputHtml}
+    ${v.warnings.length ? `<div class="panel warn-box">${v.warnings.map((w) => `<p>${esc(w)}</p>`).join("")}</div>` : ""}
+    <div class="panel"><div class="panel-head"><h2>지난 입력</h2>
+      <span><button class="btn" id="live-win">승리로 끝내기</button> <button class="btn" id="live-loss">패배로 끝내기</button>
+        <button class="btn" id="live-abort">중단하기</button></span></div>
+      <div id="live-abort-box"></div>
+      <ol class="plain small">${v.history.map((h) => `<li>${esc(h)}</li>`).join("") || "<li class='muted'>아직 없습니다.</li>"}</ol></div>`;
+  bindLive(v);
+}
+async function refreshEstimate() {
+  const F = live.form;
+  if (!F.me.kind || !F.opp.kind) return;
+  try {
+    const e = await api("/api/live/estimate", { id: live.id, me: F.me, opp: F.opp });
+    if (!F.edited.me && e.my_hp != null) { F.my_hp = e.my_hp; if ($("#f-myhp")) $("#f-myhp").value = e.my_hp; }
+    if (!F.edited.opp && e.opp_hp != null) { F.opp_hp = e.opp_hp; if ($("#f-opphp")) $("#f-opphp").value = e.opp_hp; }
+    F.estimated = true;
+    if ($("#f-est")) $("#f-est").textContent = "고른 기술로 예상한 값입니다. 게임 화면과 다르면 고치세요.";
+  } catch (e) { /* 예상값은 편의 기능이라 실패해도 넘어간다 */ }
+}
+function bindLive(v) {
+  const F = live.form, rerender = () => renderLive(live.view);
+  document.querySelectorAll("[data-first]").forEach((b) => b.addEventListener("click", () => { F.first = b.dataset.first; rerender(); }));
+  document.querySelectorAll("[data-my]").forEach((b) => b.addEventListener("click", () => {
+    const [kind, id] = b.dataset.my.split(":");
+    F.me = kind === "move" ? { kind, move: id, mega: F.me.mega || false } : kind === "switch" ? { kind, species: id } : { kind: "none" };
+    rerender(); refreshEstimate();
+  }));
+  document.querySelectorAll("[data-opp]").forEach((b) => b.addEventListener("click", () => {
+    const [kind, id] = b.dataset.opp.split(":");
+    F.opp = kind === "move" ? { kind, move: id, mega: F.opp.mega || false } : kind === "switch"
+      ? { kind, species: id, entry: defaults(((v.form.opp_bench || []).find((b) => b.id === id) || {}).entry) } : { kind: "none" };
+    rerender(); refreshEstimate();
+  }));
+  document.querySelectorAll("[data-oppentry]").forEach((c) => c.addEventListener("change", () => {
+    F.opp.entry = [...document.querySelectorAll("[data-oppentry]")].filter((x) => x.checked).map((x) => x.dataset.oppentry);
+  }));
+  if ($("#f-oppother")) $("#f-oppother").addEventListener("change", (e) => {
+    if (e.target.value.trim()) { F.opp = { kind: "move", move: e.target.value.trim(), mega: F.opp.mega || false }; rerender(); refreshEstimate(); }
+  });
+  document.querySelectorAll("[data-x]").forEach((el) => el.addEventListener("change", () => { F.extras[el.dataset.x] = el.value.trim(); }));
+  if ($("#f-mymega")) $("#f-mymega").addEventListener("change", (e) => { F.me.mega = e.target.checked; refreshEstimate(); });
+  if ($("#f-oppmega")) $("#f-oppmega").addEventListener("change", (e) => { F.opp.mega = e.target.checked; refreshEstimate(); });
+  if ($("#f-myhp")) $("#f-myhp").addEventListener("input", (e) => { F.my_hp = e.target.value; F.edited.me = true; });
+  if ($("#f-opphp")) $("#f-opphp").addEventListener("input", (e) => { F.opp_hp = e.target.value; F.edited.opp = true; });
+  document.querySelectorAll("[data-hp]").forEach((b) => b.addEventListener("click", () => {
+    const [side] = b.dataset.hp.split(":");
+    if (side === "me") { F.my_hp = 0; F.edited.me = true; $("#f-myhp").value = 0; } else { F.opp_hp = 0; F.edited.opp = true; $("#f-opphp").value = 0; }
+  }));
+  if ($("#live-turn")) $("#live-turn").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+    const extras = { ...F.extras };
+    const form = { first: F.first, me: F.me, opp: F.opp, my_hp: F.my_hp === "" ? null : Number(F.my_hp),
+      opp_hp: F.opp_hp === "" ? null : Number(F.opp_hp), extras };
+    try { renderLive(await api("/api/live/turn", { id: live.id, form })); }
+    catch (e) { $("#live-preview").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+  }));
+  document.querySelectorAll("[data-opprep]").forEach((b) => b.addEventListener("click", () => {
+    F.opp_rep = b.dataset.opprep;
+    F.opp_rep_entry = defaults(((v.form.opp_bench || []).find((x) => x.id === F.opp_rep) || {}).entry);
+    rerender();
+  }));
+  document.querySelectorAll("[data-repentry]").forEach((c) => c.addEventListener("change", () => {
+    F.opp_rep_entry = [...document.querySelectorAll("[data-repentry]")].filter((x) => x.checked).map((x) => x.dataset.repentry);
+  }));
+  document.querySelectorAll("[data-myrep]").forEach((b) => b.addEventListener("click", () => { F.my_rep = b.dataset.myrep; rerender(); }));
+  if ($("#live-replace")) $("#live-replace").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+    renderLive(await api("/api/live/replace", { id: live.id, me: F.my_rep || null, opp: F.opp_rep || null, opp_entry: F.opp_rep_entry || [] }));
+  }));
+  const ta = $("#live-input");
+  if ($("#live-preview-btn")) $("#live-preview-btn").addEventListener("click", async () => {
+    const p = await api("/api/live/preview", { id: live.id, text: ta.value });
+    $("#live-preview").innerHTML = p.ok ? `해석: ${esc(p.echo)}` : p.errors.map((e) => `<p class="err">해석 실패: ${esc(e)}</p>`).join("");
+  });
+  if ($("#live-apply")) $("#live-apply").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+    const p = await api("/api/live/preview", { id: live.id, text: ta.value });
+    if (!p.ok) { $("#live-preview").innerHTML = p.errors.map((e) => `<p class="err">해석 실패: ${esc(e)}</p>`).join(""); return; }
+    renderLive(await api("/api/live/apply", { id: live.id, text: ta.value }));
+  }));
+  if ($("#live-why")) $("#live-why").addEventListener("click", async () => {
+    const w = await api("/api/live/why", { id: live.id });
+    const b = w.belief;
+    $("#live-why-box").innerHTML = `<p>${esc(w.note)}</p>` + (b ? `<p>상대 ${esc(b.species)} 도구 추정: ${b.items.map(([k, p]) => `${esc(k)} ${pct0(p)}`).join(", ")}
+      · 특성: ${b.abilities.map(([k, p]) => `${esc(k)} ${pct0(p)}`).join(", ")} · 메가스톤 ${pct0(b.mega_stone)}</p>` : "");
+  });
+  const finish = async (result, save = true) => {
+    const r = await api("/api/live/end", { id: live.id, result, save });
+    live.id = null;
+    $("#live-battle").innerHTML = `<div class="panel">${r.battle_id ? `기록을 저장했습니다 (#${r.battle_id}). '복기' 탭에서 턴별 승률을 볼 수 있습니다.`
+      : "기록 없이 끝냈습니다."} 새 배틀은 위에서 상대 6마리를 다시 입력하세요.</div>`;
+  };
+  $("#live-win").addEventListener("click", () => finish("win"));
+  $("#live-loss").addEventListener("click", () => finish("loss"));
+  $("#live-abort").addEventListener("click", () => {
+    $("#live-abort-box").innerHTML = `<div class="warn-box panel"><p>배틀을 중단합니다. 지금까지의 기록을 남길까요?</p>
+      <button class="btn" id="abort-save">기록 남기고 중단 (결과 없음)</button> <button class="btn" id="abort-drop">기록 없이 중단</button>
+      <button class="btn" id="abort-cancel">계속하기</button></div>`;
+    $("#abort-save").addEventListener("click", () => finish("aborted", true));
+    $("#abort-drop").addEventListener("click", () => finish("aborted", false));
+    $("#abort-cancel").addEventListener("click", () => { $("#live-abort-box").innerHTML = ""; });
+  });
+}
+
 // ---------------- 복기 ----------------
 async function loadBattles() {
   try {
     const rows = await api("/api/battles");
     $("#battle-list tbody").innerHTML = rows.length ? rows.map((r) => `<tr><td>${r.id}</td><td>${esc((r.played_at || "").slice(0, 16))}</td>
-      <td>${r.source === "manual" ? "실제" : "자동"}</td><td>${esc({ win: "승", loss: "패", tie: "무" }[r.result] || "-")}</td>
-      <td>${esc(r.opp.join(", "))}</td><td><button class="btn" data-review="${r.id}">복기</button></td></tr>`).join("")
+      <td>${r.source === "manual" ? "실제" : "자동"}</td><td>${esc({ win: "승", loss: "패", tie: "무", aborted: "중단" }[r.result] || "-")}</td>
+      <td>${esc(r.opp.join(", "))}</td><td><button class="btn btn-sm" data-review="${r.id}">복기</button>
+      <button class="btn btn-sm" data-bdel="${r.id}">삭제</button></td></tr>`).join("")
       : `<tr><td colspan="6" class="muted">아직 기록이 없습니다.</td></tr>`;
     document.querySelectorAll("[data-review]").forEach((b) => b.addEventListener("click", (ev) => withBusy(ev.currentTarget, () => runReview(b.dataset.review))));
+    document.querySelectorAll("[data-bdel]").forEach((b) => b.addEventListener("click", async () => {
+      if (!confirm(`배틀 기록 #${b.dataset.bdel}을(를) 지울까요? 되돌릴 수 없습니다.`)) return;
+      await api("/api/battle/delete", { id: Number(b.dataset.bdel) });
+      $("#review-result").innerHTML = ""; toast("지웠습니다."); loadBattles();
+    }));
   } catch (e) { toast(e.message); }
 }
 async function runReview(id) {

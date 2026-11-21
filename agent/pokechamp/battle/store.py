@@ -54,3 +54,8 @@ def load_battle(conn: sqlite3.Connection, battle_id: int | str) -> dict[str, Any
         raise ValueError(f"배틀 기록이 없다: {battle_id}")
     return {**dict(r), "my_team": json.loads(r["my_team_json"]), "opp": json.loads(r["opp_team_json"]),
             "log": json.loads(r["log_json"])}
+
+
+def delete_battle(conn: sqlite3.Connection, battle_id: int) -> bool:
+    with conn:
+        return conn.execute("DELETE FROM my_battles WHERE id=?", (int(battle_id),)).rowcount > 0

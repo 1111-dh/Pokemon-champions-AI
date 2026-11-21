@@ -15,6 +15,7 @@ const ROUTES: Record<string, (req: any) => unknown> = {
   '/build_state': E.buildState,
   '/stats': E.stats,
   '/bot_choice': E.botChoice,
+  '/moves_info': E.movesInfo,
 };
 
 function runOne(fn: (req: any) => unknown, body: any) {

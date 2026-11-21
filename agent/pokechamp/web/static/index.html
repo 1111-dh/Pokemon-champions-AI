@@ -28,10 +28,11 @@
     <button role="tab" data-tab="progress" aria-selected="true">진행 현황</button>
     <button role="tab" data-tab="battle">배틀 해보기</button>
     <button role="tab" data-tab="recommend">파티 추천</button>
+    <button role="tab" data-tab="live">실전</button>
     <button role="tab" data-tab="select">선출 추천</button>
     <button role="tab" data-tab="review">복기</button>
     <button role="tab" data-tab="dex">도감</button>
-    <button role="tab" data-tab="team">팀 검증</button>
+    <button role="tab" data-tab="team">내 팀</button>
     <button role="tab" data-tab="news">공식 공지</button>
   </nav>
 
@@ -160,6 +161,20 @@
       <div id="sel-result" class="stack"></div>
     </section>
 
+    <section id="tab-live" class="tab-panel" role="tabpanel" hidden>
+      <div class="panel" id="live-setup">
+        <div class="panel-head"><h2>1. 상대 6마리 → 선출 추천</h2><span class="muted">팀 프리뷰에서 상대 6마리를 보고 입력하세요.</span></div>
+        <div class="rec-form">
+          <label>내 팀 <select id="live-team" class="input"><option value="">저장한 팀이 없습니다</option></select></label>
+          <label>상대 6마리 <input id="live-opp" class="input" placeholder="예: 한카리아스, 누리레느, 하마돈, 브리두라스, 따라큐, 리자몽"></label>
+        </div>
+        <div class="run-row"><button class="btn btn-primary" id="live-select">선출 추천받기 (최대 20초)</button>
+          <span class="muted">팀은 '팀 검증' 탭이나 파티 추천에서 저장합니다.</span></div>
+        <div id="live-select-result" class="stack"></div>
+      </div>
+      <div id="live-battle" class="stack"></div>
+    </section>
+
     <section id="tab-review" class="tab-panel" role="tabpanel" hidden>
       <div class="panel">
         <div class="panel-head"><h2>배틀 기록</h2><span class="muted">pokechamp battle로 진행한 배틀이 저장됩니다. 자동 배틀(sim)은 검증용입니다.</span></div>
@@ -200,6 +215,7 @@
             <input id="team-name" class="input" placeholder="저장할 팀 이름" aria-label="저장할 팀 이름">
             <button class="btn" id="team-save">팀 저장</button>
             <label class="check"><input type="checkbox" id="team-keep"> 빈 항목은 비워 둔 채 저장</label>
+            <label class="check"><input type="checkbox" id="team-replace"> 같은 이름이면 덮어쓰기</label>
           </div>
         </div>
         <div class="panel">
@@ -207,7 +223,7 @@
           <div id="team-result" class="muted">한국어나 영어 이름으로 넣을 수 있습니다. 레귤레이션 M-C 규칙(6마리, 도구 중복 금지, Stat Points 능력치당 32·합계 66)으로 검사합니다. 위반이 있어도 팀은 쓸 수 있고, 경고로만 보여 줍니다.</div>
         </div>
         <div class="panel">
-          <div class="panel-head"><h2>저장한 팀</h2></div>
+          <div class="panel-head"><h2>내 팀 목록</h2><span class="muted">보기 · 편집으로 불러오기 · 삭제</span></div>
           <ul id="team-list" class="commit-list"></ul>
         </div>
       </div>

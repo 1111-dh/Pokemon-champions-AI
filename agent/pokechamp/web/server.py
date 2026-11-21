@@ -40,6 +40,7 @@ class App:
         self.conn = connect(check_same_thread=False)  # 요청 스레드들이 _lock으로 순서를 지켜 쓴다
         self.client = client or EngineClient()
         self.playground = Playground(self.conn, self.client)
+        self.live: dict[str, Any] = {}       # 실전 세션 (id → LiveBattle)
         self.get_routes: dict[str, Callable[..., Any]] = {
             "/api/progress": self.progress,
             "/api/status": lambda q: status_data(self.conn),
@@ -57,6 +58,22 @@ class App:
             "/api/team/recommend": self.team_recommend,
             "/api/select": self.select,
             "/api/review": self.review,
+            "/api/live/new": self.live_new,
+            "/api/live/start": lambda b: self._live(b).start([int(x) for x in b.get("slots", [])], str(b.get("opp_lead") or ""),
+                                                             list(b.get("opp_lead_entry") or [])),
+            "/api/live/entry": lambda b: self._live(b).entry_options(str(b.get("species") or "")),
+            "/api/live/preview": lambda b: self._live(b).preview(str(b.get("text") or "")),
+            "/api/live/apply": lambda b: json.loads(json.dumps(self._live(b).apply(str(b.get("text") or "")), default=float)),
+            "/api/live/why": lambda b: self._live(b).explain(),
+            "/api/live/view": lambda b: json.loads(json.dumps(self._live(b).view(), default=float)),
+            "/api/live/end": lambda b: self._live(b).end(str(b.get("result") or ""), bool(b.get("save", True))),
+            "/api/battle/delete": self.battle_delete,
+            "/api/team/delete": self.team_delete,
+            "/api/team/show": self.team_show,
+            "/api/live/estimate": lambda b: self._live(b).estimate(b.get("me") or {}, b.get("opp") or {}),
+            "/api/live/turn": lambda b: json.loads(json.dumps(self._live(b).submit_turn(b.get("form") or {}), default=float)),
+            "/api/live/replace": lambda b: json.loads(json.dumps(self._live(b).submit_replace(b.get("me"), b.get("opp"),
+                                                                                              list(b.get("opp_entry") or [])), default=float)),
             "/api/team/random": lambda b: self.client.batch("/random_team", [{"seed": b.get("seed") or secrets.token_hex(4)}])[0]["result"],
             "/api/selfplay": self.selfplay,
             "/api/news/check": self.news_check,
@@ -205,6 +222,60 @@ class App:
             o["sprite"] = sprite_id(o["name_en"])
         r["text"] = text_report(r, show_matrix=True)
         return json.loads(json.dumps(r, default=float))
+
+    # ---------- 실전 (배틀 중 추천) ----------
+    def _live(self, b: dict):
+        lb = self.live.get(str(b.get("id") or ""))
+        if lb is None:
+            raise ValueError("실전 세션이 없다 (서버를 다시 띄웠으면 새로 시작하세요)")
+        return lb
+
+    def live_new(self, b: dict) -> dict:
+        """상대 6마리 → 선출 추천 (시간 예산 안에서 끝난다)."""
+        from pokechamp.battle.live import LiveBattle
+        from pokechamp.select.recommend import SelectError, parse_opponents
+        from pokechamp.teams.store import load_team
+
+        try:
+            t = load_team(self.conn, str(b.get("team") or ""))
+            opp, notes = parse_opponents(self.conn, str(b.get("opp") or "").replace("\n", ","))
+            if len(opp) != 6:
+                raise SelectError(f"상대 포켓몬은 6마리여야 한다 (지금 {len(opp)}마리)")
+            lb = LiveBattle(self.conn, self.client, t["team"], opp, team_name=t["name"])
+            sel = lb.selection(float(b["budget"]) if b.get("budget") else None)
+        except SelectError as e:
+            raise ValueError(str(e)) from e
+        sid = secrets.token_hex(6)
+        self.live[sid] = lb
+        from pokechamp.battle.events import SpeciesResolver
+        res = SpeciesResolver(self.conn)
+        mine = [{"slot": i + 1, "species": s["species"], "name": lb.ko("species", res(s["species"])), "sprite": sprite_id(s["species"]),
+                 "item": lb.ko("items", re.sub(r"[^a-z0-9]", "", (s.get("item") or "").lower()))} for i, s in enumerate(t["team"])]
+        opp_list = [{"id": sp, "name": lb.ko("species", sp), "sprite": sprite_id(lb.en(sp))} for sp in opp]
+        return json.loads(json.dumps({"id": sid, "notes": notes, "selection": sel, "mine": mine, "opp": opp_list}, default=float))
+
+    def battle_delete(self, b: dict) -> dict:
+        from pokechamp.battle.store import delete_battle
+        return {"deleted": delete_battle(self.conn, int(b["id"]))}
+
+    def team_delete(self, b: dict) -> dict:
+        from pokechamp.teams.store import delete_team
+        name = str(b.get("name") or "")
+        if not delete_team(self.conn, name):
+            raise ValueError(f"'{name}' 팀이 없다")
+        return {"deleted": name}
+
+    def team_show(self, b: dict) -> dict:
+        from pokechamp.battle.events import SpeciesResolver
+        from pokechamp.teams.store import export_text, load_team
+        t = load_team(self.conn, str(b.get("name") or ""))
+        names = NameIndex(self.conn)
+        res = SpeciesResolver(self.conn)
+        members = [{"species": s["species"], "name": names.ko["species"].get(res(s["species"]), s["species"]), "sprite": sprite_id(s["species"]),
+                    "item": names.ko["items"].get(re.sub(r"[^a-z0-9]", "", (s.get("item") or "").lower()), s.get("item") or ""),
+                    "filled": s.get("filled") or []} for s in t["team"]]
+        return {"name": t["name"], "source": t["source"], "valid": t["valid"], "problems": t["problems"],
+                "created_at": t["created_at"], "members": members, "export": export_text(t["team"])}
 
     # ---------- 복기 ----------
     def battles(self, q: dict) -> list:
