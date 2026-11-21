@@ -12,7 +12,11 @@ const TYPE_COLOR = {
   Rock: "#a49a6c", Ghost: "#704170", Dragon: "#5060e1", Dark: "#624d4e", Steel: "#4f93ab", Fairy: "#e05be0",
 };
 const CATEGORY_KO = { Physical: "물리", Special: "특수", Status: "변화" };
-const STAT_KO = { hp: "HP", atk: "공격", def: "방어", spa: "특공", spd: "특방", spe: "스피드" };
+// 능력치는 어디서든 H·A·B·C·D·S 순서와 글자로 보인다 (데이터의 키 순서와 상관없이)
+const STAT_ORDER = ["hp", "atk", "def", "spa", "spd", "spe"];
+const STAT_KO = { hp: "H", atk: "A", def: "B", spa: "C", spd: "D", spe: "S" };
+const statEntries = (d) => STAT_ORDER.filter((k) => d && k in d).map((k) => [k, d[k]]);
+const spText = (d) => statEntries(d).filter(([, v]) => v).map(([k, v]) => `${STAT_KO[k]}${v}`).join(" ");
 const KST = { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false };
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -225,13 +229,13 @@ async function showDex(id) {
       <div class="active-card" style="border:0;padding:0">${sprite(p.sprite)}<div>
         <div class="nm">${esc(p.name_ko)}</div><div class="muted">${esc(p.name_en)}${p.official_code ? `, 공식 코드 ${esc(p.official_code)}` : ", 메가 폼"}</div>
         ${typeChips(p.types)}<div class="info-line">특성 ${p.abilities.map(esc).join(", ")}</div></div></div>
-      <div class="statbars">${Object.entries(p.stats).map(([k, v]) => `<span class="muted">${STAT_KO[k]}</span><strong>${v}</strong>
+      <div class="statbars">${statEntries(p.stats).map(([k, v]) => `<span class="muted">${STAT_KO[k]}</span><strong>${v}</strong>
         <span class="statbar"><i style="width:${Math.min(100, (v / max) * 100)}%"></i></span>`).join("")}</div>
       ${megas.length ? `<p class="info-line">메가진화: ${megas.map((m) => `<a href="#" data-id="${m.id}">${esc(m.name_ko)}</a>`).join(", ")}</p>` : ""}
       ${d.sets && d.sets.length ? `<h3 style="margin-top:14px">자주 보이는 세트 (원형 상위 ${d.sets.length}개)</h3>
       <table class="table"><thead><tr><th>확률</th><th>도구</th><th>기술</th><th>성격·배분</th></tr></thead><tbody>
       ${d.sets.map((x) => `<tr><td>${(x.weight * 100).toFixed(1)}%</td><td>${esc(x.item || "-")}${x.mega ? " (메가)" : ""}</td>
-        <td>${x.moves.map(esc).join(", ")}</td><td class="muted">${esc(x.nature || "")}${x.spread ? ` ${Object.entries(x.spread).filter(([, v]) => v).map(([k, v]) => `${STAT_KO[k]} ${v}`).join(" / ")}` : ""}</td></tr>`).join("")}
+        <td>${x.moves.map(esc).join(", ")}</td><td class="muted">${esc(x.nature || "")}${x.spread ? ` ${spText(x.spread)}` : ""}</td></tr>`).join("")}
       </tbody></table><p class="muted">${d.sets.some((x) => !x.rule_generated) ? "완성 세트 근거 포함." : "통계의 주변 분포에 규칙 필터와 보정(IPF)을 적용해 만든 추정 세트입니다."}</p>` : ""}
       <h3 style="margin-top:14px">배울 수 있는 기술 ${d.moves.length}개</h3>
       <table class="table"><thead><tr><th>기술</th><th>타입</th><th>분류</th><th>위력</th><th>명중</th><th>PP</th></tr></thead>
@@ -300,7 +304,7 @@ const withPopular = (all, popularIds) => {
 };
 
 // ---------------- 팀 만들기 (선택 방식) ----------------
-const STAT_KEYS = [["hp", "HP"], ["atk", "공격"], ["def", "방어"], ["spa", "특공"], ["spd", "특방"], ["spe", "스피드"]];
+const STAT_KEYS = STAT_ORDER.map((k) => [k, STAT_KO[k]]);
 const builder = { options: null, speciesData: {}, slots: Array.from({ length: 6 }, () => emptySlot()) };
 function emptySlot() { return { species: "", item: "", ability: "", nature: "", evs: {}, moves: ["", "", "", ""] }; }
 async function builderOptions() {
@@ -565,7 +569,7 @@ const calc = { me: calcSide(), opp: calcSide(), filled: { me: false, opp: false 
   statsError: { me: "", opp: "" },
   dir: "me", move: { me: "", opp: "" }, hits: { me: null, opp: null }, weather: "", terrain: "", screens: [],
   team: "", teamSets: [], result: null, error: "" };
-const CALC_STATS = [["hp", "H"], ["atk", "A"], ["def", "B"], ["spa", "C"], ["spd", "D"], ["spe", "S"]];
+const CALC_STATS = STAT_KEYS;
 const CALC_BOOSTS = [["atk", "공격"], ["def", "방어"], ["spa", "특공"], ["spd", "특방"]];
 const CALC_STATUS = [["", "없음"], ["brn", "화상"], ["par", "마비"], ["psn", "독"], ["tox", "맹독"], ["slp", "잠듦"], ["frz", "얼음"]];
 const CALC_WEATHER = [["", "날씨 없음"], ["sunnyday", "쾌청"], ["raindance", "비"], ["sandstorm", "모래바람"], ["snowscape", "설경"]];

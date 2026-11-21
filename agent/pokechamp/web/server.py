@@ -25,9 +25,10 @@ from urllib.parse import parse_qs, urlparse
 
 from pokechamp.data.db import active_version, connect
 from pokechamp.engine_client import EngineClient, EngineError
-from pokechamp.paths import ENGINE_DIR, ROOT
-from pokechamp.status import status_data
 from pokechamp.input.team_text import FIELD_KO, NameIndex, TeamParseError, parse_team
+from pokechamp.paths import ENGINE_DIR, ROOT
+from pokechamp.stat_order import stat_letter
+from pokechamp.status import status_data
 from pokechamp.teams.store import fill_defaults, list_teams, save_team, validate as validate_team
 from pokechamp.web.sprites import sprite_id
 
@@ -249,7 +250,6 @@ class App:
         "timid": ("spe", "atk"), "hasty": ("spe", "def"), "jolly": ("spe", "spa"), "naive": ("spe", "spd"),
         "modest": ("spa", "atk"), "mild": ("spa", "def"), "quiet": ("spa", "spe"), "rash": ("spa", "spd"),
         "calm": ("spd", "atk"), "gentle": ("spd", "def"), "sassy": ("spd", "spe"), "careful": ("spd", "spa")}
-    STAT_KO = {"hp": "HP", "atk": "공격", "def": "방어", "spa": "특공", "spd": "특방", "spe": "스피드"}
 
     def builder_options(self, q: dict) -> dict:
         v = active_version(self.conn)
@@ -265,7 +265,7 @@ class App:
         for r in self.conn.execute("SELECT * FROM natures WHERE version_id=? ORDER BY name_ko", (v["id"],)):
             up, down = self.NATURE_STATS.get(r["id"], (None, None))
             natures.append({"id": r["id"], "name": r["name_ko"] or r["name_en"], "name_en": r["name_en"],
-                            "note": f"{self.STAT_KO[up]}↑ {self.STAT_KO[down]}↓" if up else "무보정"})
+                            "note": f"{stat_letter(up)}↑ {stat_letter(down)}↓" if up else "무보정"})
         megas = [{"id": r["mega_species_id"], "base": r["base_species_id"], "stone": r["stone_item_id"],
                   "name": r["name_ko"] or r["name_en"], "name_en": r["name_en"], "sprite": sprite_id(r["name_en"]),
                   "types": json.loads(r["types_json"])}

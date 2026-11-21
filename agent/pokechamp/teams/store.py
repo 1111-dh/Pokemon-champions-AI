@@ -18,6 +18,7 @@ from pokechamp.data.priors import Priors
 from pokechamp.data.static.names import to_id
 from pokechamp.input.team_text import ParsedSet
 from pokechamp.sets.archetypes import Archetype, load_archetypes, load_rules, move_allowed
+from pokechamp.stat_order import ordered, sp_text
 
 
 def _best_archetype(archs: list[Archetype], ps: ParsedSet) -> Archetype | None:
@@ -75,7 +76,7 @@ def fill_defaults(conn: sqlite3.Connection, sets: list[ParsedSet], priors: Prior
                 (json.loads(k), p) for k, p in priors.marginal(ps.species_id, "spreads").values]
             if spreads:
                 ps.evs = dict(max(spreads, key=lambda x: x[1])[0])
-                done.append("배분 " + " / ".join(f"{k} {v}" for k, v in ps.evs.items() if v))
+                done.append("배분 " + sp_text(ps.evs))
         if len(ps.moves) < 4:
             have = {to_id(m) for m in ps.moves}
             cands = list(arch.moves if arch else []) + [k for k, _ in priors.marginal(ps.species_id, "moves").values]
@@ -147,7 +148,7 @@ def export_text(team: list[dict[str, Any]]) -> str:
         if s.get("ability"):
             lines.append(f"Ability: {s['ability']}")
         if s.get("evs"):
-            lines.append("EVs: " + " / ".join(f"{v} {label[k]}" for k, v in s["evs"].items() if v))
+            lines.append("EVs: " + " / ".join(f"{v} {label[k]}" for k, v in ordered(s["evs"]) if v))
         if s.get("nature"):
             lines.append(f"{s['nature']} Nature")
         lines += [f"- {m}" for m in s.get("moves", [])]
