@@ -61,6 +61,7 @@ function showTab(name) {
   ({
     team: () => { loadTeams(); if (!builder.options) renderBuilder(); },
     live: loadLiveTeams,
+    calc: loadCalc,
     review: loadBattles,
   })[name]?.();
 }
@@ -554,6 +555,256 @@ $("#rec-run").addEventListener("click", (ev) => withBusy(ev.currentTarget, async
 }));
 
 const pct0 = (x) => `${Math.round(x * 100)}%`;
+
+// ---------------- 계산기 (데미지 · 스피드) ----------------
+// 직접 배틀할 때 대면을 빠르게 확인한다. 실전 탭과는 연결하지 않는다.
+// form: 메가 폼 id (메가 폼을 골랐을 때만). 메가는 체크박스가 아니라 포켓몬 목록에서 메가 폼을 골라 정한다
+const calcSide = () => ({ species: "", form: "", item: "", ability: "", nature: "", evs: {}, moves: [],
+  boosts: { atk: 0, def: 0, spa: 0, spd: 0 }, status: "", hp_pct: 100 });
+const calc = { me: calcSide(), opp: calcSide(), filled: { me: false, opp: false }, stats: { me: null, opp: null },
+  statsError: { me: "", opp: "" },
+  dir: "me", move: { me: "", opp: "" }, hits: { me: null, opp: null }, weather: "", terrain: "", screens: [],
+  team: "", teamSets: [], result: null, error: "" };
+const CALC_STATS = [["hp", "H"], ["atk", "A"], ["def", "B"], ["spa", "C"], ["spd", "D"], ["spe", "S"]];
+const CALC_BOOSTS = [["atk", "공격"], ["def", "방어"], ["spa", "특공"], ["spd", "특방"]];
+const CALC_STATUS = [["", "없음"], ["brn", "화상"], ["par", "마비"], ["psn", "독"], ["tox", "맹독"], ["slp", "잠듦"], ["frz", "얼음"]];
+const CALC_WEATHER = [["", "날씨 없음"], ["sunnyday", "쾌청"], ["raindance", "비"], ["sandstorm", "모래바람"], ["snowscape", "설경"]];
+const CALC_TERRAIN = [["", "필드 없음"], ["electricterrain", "일렉트릭필드"], ["grassyterrain", "그래스필드"], ["psychicterrain", "사이코필드"], ["mistyterrain", "미스트필드"]];
+const CALC_SCREENS = [["reflect", "리플렉터"], ["lightscreen", "빛의장막"], ["auroraveil", "오로라베일"]];
+const sideLabel = (k) => (k === "me" ? "내" : "상대");
+const megaOf = (s) => (s.form ? (builder.options.megas || []).find((m) => m.id === s.form) : null);
+const calcName = (o, s) => { const m = megaOf(s); return m ? m.name : nameOf(o.species, s.species); };
+const opts = (list, cur) => list.map(([v, n]) => `<option value="${v}" ${String(cur) === String(v) ? "selected" : ""}>${n}</option>`).join("");
+
+async function loadCalc() {
+  const o = await builderOptions();
+  try {
+    const teams = await api("/api/teams");
+    calc.teams = teams.map((t) => t.name);
+  } catch { calc.teams = []; }
+  renderCalc(o);
+}
+function calcSetPayload(s) {
+  return { set: { species: s.species, item: s.item, ability: s.ability, nature: s.nature, evs: s.evs, moves: s.moves },
+    mega: !!s.form, boosts: s.boosts, status: s.status, hp_pct: s.hp_pct };
+}
+// 포켓몬 고르기: 메가 폼을 고르면 메가스톤을 들려 메가로 계산한다. 같은 종의 일반 ↔ 메가 전환은 나머지 세트를 그대로 둔다
+async function pickCalcSpecies(k, p) {
+  const mega = (builder.options.megas || []).find((m) => m.id === p.id);
+  const base = mega ? mega.base : p.id;
+  if (!p.id) { calc[k] = calcSide(); calc.filled[k] = false; return; }
+  if (calc[k].species !== base) await fillFromStats(k, base);
+  calc[k].form = mega ? mega.id : "";
+  if (mega) { calc[k].item = mega.stone; await speciesData(mega.id); }
+}
+async function fillFromStats(k, id) {
+  const d = await speciesData(id), p = d.popular, s = calcSide();
+  s.species = id;
+  s.item = (p.items || [])[0] || "";
+  s.ability = (p.abilities || [])[0] || (d.abilities[0] || {}).id || "";
+  s.nature = (p.natures || [])[0] || "";
+  if ((p.spreads || [])[0]) s.evs = Object.fromEntries(Object.entries(p.spreads[0]).filter(([, v]) => v));
+  const learn = new Set(d.moves.map((m) => m.id));
+  s.moves = (p.moves || []).filter((m) => learn.has(m)).slice(0, 4);
+  calc[k] = s; calc.filled[k] = true; calc.move[k] = "";
+}
+function calcCard(k, o) {
+  const s = calc[k], mega = megaOf(s), sp = mega || o.species.find((x) => x.id === s.species), sd = builder.speciesData[s.species];
+  const megaAbility = mega && ((builder.speciesData[mega.id] || {}).abilities || [])[0];
+  const item = o.items.find((x) => x.id === s.item), st = calc.stats[k];
+  const total = CALC_STATS.reduce((t, [x]) => t + (Number(s.evs[x]) || 0), 0);
+  const teamRow = k === "me" ? `<div class="calc-team">
+      <select class="input input-sm" data-cteam aria-label="내 팀"><option value="">내 팀에서 불러오기</option>${(calc.teams || []).map((n) => `<option ${n === calc.team ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
+      ${calc.teamSets.map((t, i) => { const x = o.species.find((y) => y.id === t.species); return `<button class="calc-member" data-cmember="${i}" title="${esc(x ? x.name : t.species)}">${x ? sprite(x.sprite) : esc(t.species)}</button>`; }).join("")}
+    </div>` : "";
+  return `<div class="calc-card-head"><h2>${sideLabel(k)} 포켓몬</h2>${calc.filled[k] ? `<span class="state-badge warn">통계로 채움</span>` : ""}</div>
+    ${teamRow}
+    <div class="calc-mon">${sp ? sprite(sp.sprite) : `<span class="calc-mon-empty"></span>`}
+      <div class="calc-mon-main">${pickerBtn(`data-cpick="species" data-side="${k}"`, sp && sp.name, "포켓몬 고르기")}
+        ${st ? `<span class="muted small">${(st.types || []).map((t) => TYPE_KO[t] || t).join("·")}</span>` : ""}</div></div>
+    ${s.species ? `
+    <div class="calc-fields">
+      <span class="lbl">성격</span>${pickerBtn(`data-cpick="nature" data-side="${k}"`, nameOf(o.natures, s.nature) && `${nameOf(o.natures, s.nature)} (${(o.natures.find((x) => x.id === s.nature) || {}).note})`, "성격")}
+      <span class="lbl">도구</span>${pickerBtn(`data-cpick="item" data-side="${k}"`, item && item.name, "도구")}
+      <span class="lbl">특성</span>${mega ? `<span>${esc(megaAbility ? megaAbility.name : "-")} <span class="muted small">(메가 특성)</span></span>`
+        : pickerBtn(`data-cpick="ability" data-side="${k}"`, nameOf(sd ? sd.abilities : [], s.ability), "특성")}
+    </div>
+    <div class="calc-stats">${CALC_STATS.map(([x, n]) => `<label><span>${n}</span>
+      <input type="number" min="0" max="32" class="input" data-csp="${x}" data-side="${k}" value="${s.evs[x] || ""}" placeholder="0">
+      <b>${st ? st[x] : "-"}</b></label>`).join("")}</div>
+    <p class="${total > 66 ? "err" : "muted"} small">SP 합계 ${total}/66 · 숫자 아래는 실수치</p>
+    ${calc.statsError[k] ? `<p class="err small">${esc(calc.statsError[k])}</p>` : ""}
+    <div class="calc-mods">
+      ${CALC_BOOSTS.map(([x, n]) => `<label>${n}<select class="input input-sm" data-cboost="${x}" data-side="${k}">${opts([6, 5, 4, 3, 2, 1, 0, -1, -2, -3, -4, -5, -6].map((v) => [v, v > 0 ? `+${v}` : v]), s.boosts[x] || 0)}</select></label>`).join("")}
+      <label>상태<select class="input input-sm" data-cstatus="${k}">${opts(CALC_STATUS, s.status)}</select></label>
+      <label>HP %<input type="number" min="1" max="100" class="input input-sm" data-chp="${k}" value="${s.hp_pct}"></label>
+    </div>` : ""}`;
+}
+function calcSpeedLine(o) {
+  const a = calc.stats.me, b = calc.stats.opp;
+  const bad = ["me", "opp"].filter((k) => calc.statsError[k]);
+  if (bad.length) return `<p class="err">${bad.map((k) => `${sideLabel(k)} 포켓몬: ${esc(calc.statsError[k])}`).join(" · ")}</p>`;
+  if (!a || !b) return `<p class="muted">양쪽 포켓몬을 고르면 스피드를 비교합니다.</p>`;
+  // 상태이상(마비 절반 등)을 반영한 스피드로 비교하고, 바뀐 경우 실수치를 함께 보여 준다
+  const sa = a.spe_status ?? a.spe, sb = b.spe_status ?? b.spe;
+  const show = (k, st, v) => `${sideLabel(k)} ${esc(calcName(o, calc[k]))} <b>${v}</b>${v !== st.spe ? ` <span class="muted small">(실수치 ${st.spe}, ${(CALC_STATUS.find(([x]) => x === calc[k].status) || [])[1] || ""})</span>` : ""}`;
+  const verdict = sa === sb ? "동속 (누가 먼저 움직일지는 무작위)" : sa > sb ? "내가 빠름" : "상대가 빠름";
+  return `<div class="calc-speed-row"><span>스피드</span>
+    <span class="${sa >= sb ? "calc-win" : ""}">${show("me", a, sa)}</span><span class="muted">vs</span>
+    <span class="${sb >= sa ? "calc-win" : ""}">${show("opp", b, sb)}</span>
+    <strong>→ ${verdict}</strong></div><p class="muted small">실수치에 상태이상(마비 절반)만 반영합니다 (랭크·스카프·순풍 미반영).</p>`;
+}
+function hpRangeBar(r) {
+  const hp = r.defender.hp, max = r.defender.maxhp;
+  const left = (x) => Math.max(0, hp - x) / max * 100;
+  const lo = left(r.normal.max), hi = left(r.normal.min);
+  return `<div class="calc-hpbar" aria-hidden="true"><i class="rest" style="width:${lo}%"></i><i class="range" style="width:${hi - lo}%"></i></div>`;
+}
+function calcResultHtml(o) {
+  if (calc.error) return `<p class="err">${esc(calc.error)}</p>`;
+  const r = calc.result;
+  if (!r) return `<p class="muted">공격하는 쪽의 기술을 고르면 계산합니다.</p>`;
+  if (r.status) return `<p>${esc(r.move)}은(는) 변화기라 데미지가 없습니다.</p>`;
+  if (r.immune) return `<p class="calc-ko">효과가 없습니다</p><p class="muted">${esc(r.move)} → 상대에게 데미지 0</p>`;
+  const eff = { 0.25: "효과가 매우 별로 ×0.25", 0.5: "효과가 별로 ×0.5", 1: "", 2: "효과가 굉장함 ×2", 4: "효과가 굉장함 ×4" }[r.effectiveness] ?? `×${r.effectiveness}`;
+  const n = r.normal, c = r.crit;
+  return `<div class="calc-ko">${esc(n.ko.label)}</div>
+    <div class="calc-dmg">${n.min}~${n.max} <span class="muted">(${n.min_pct}~${n.max_pct}%)</span>${r.hits > 1 ? ` <span class="muted small">${r.hits}타 합계</span>` : ""}</div>
+    ${hpRangeBar(r)}
+    <p class="muted small">HP ${r.defender.hp}/${r.defender.maxhp} 기준${eff ? ` · ${eff}` : ""}</p>
+    <p>급소: ${c.min}~${c.max} <span class="muted">(${c.min_pct}~${c.max_pct}%)</span> → ${esc(c.ko.label)}</p>
+    <details><summary class="small">난수 16단계 보기</summary><p class="small calc-rolls">${n.rolls.join(", ")}</p>
+      <p class="small muted">급소: ${c.rolls.join(", ")}</p></details>
+    <p class="muted small">${r.notes.map(esc).join(" · ")}</p>`;
+}
+// 날씨·필드를 까는 특성(가뭄 등)이면 안내만 한다. 턴이 지나거나 다른 날씨로 덮일 수 있어 자동으로 켜지 않는다
+function calcFieldHint(o) {
+  const rows = ["me", "opp"].map((k) => [k, (calc.stats[k] || {}).field_hint]).filter(([, h]) => h)
+    .filter(([, h]) => (h.weather ? calc.weather !== h.weather : calc.terrain !== h.terrain));
+  if (!rows.length) return "";
+  return `<div class="calc-hint">${rows.map(([k, h]) => {
+    const [kind, list, cur] = h.weather ? ["weather", CALC_WEATHER, h.weather] : ["terrain", CALC_TERRAIN, h.terrain];
+    const nm = (list.find(([v]) => v === cur) || [])[1];
+    const ab = ((builder.speciesData[calc[k].form || calc[k].species] || {}).abilities || []).find((a) => a.id === h.ability);
+    return `<p class="small">${sideLabel(k)} ${esc(calcName(o, calc[k]))}의 ${esc(ab ? ab.name : h.ability)}: 지금 ${esc(nm)}이면
+      <button class="btn btn-sm" data-chint="${kind}" data-cval="${cur}">${esc(nm)}로 계산</button></p>`;
+  }).join("")}</div>`;
+}
+function renderCalc(o) {
+  o = o || builder.options;
+  $("#calc-me").innerHTML = calcCard("me", o);
+  $("#calc-opp").innerHTML = calcCard("opp", o);
+  $("#calc-speed").innerHTML = calcSpeedLine(o);
+  const att = calc.dir, def = att === "me" ? "opp" : "me", asd = builder.speciesData[calc[att].species];
+  const mv = asd && asd.moves.find((m) => m.id === calc.move[att]);
+  const r = calc.result;
+  $("#calc-damage").innerHTML = `<div class="calc-dir">
+      <button class="btn btn-sm ${att === "me" ? "btn-primary" : ""}" data-cdir="me">내가 공격</button>
+      <button class="btn btn-sm ${att === "opp" ? "btn-primary" : ""}" data-cdir="opp">상대가 공격</button>
+      <span class="muted small">${sideLabel(att)} ${esc(calcName(o, calc[att]) || "?")} → ${sideLabel(def)} ${esc(calcName(o, calc[def]) || "?")}</span></div>
+    <div class="calc-dmg-controls">
+      ${pickerBtn(`data-cmove`, mv && mv.name, calc[att].species ? "기술 고르기" : "먼저 포켓몬을 고르세요")}
+      ${r && r.hit_options && r.hit_options.length > 1 ? `<label>타수<select class="input input-sm" data-chits>${opts(r.hit_options.map((h) => [h, `${h}회`]), r.hits)}</select></label>` : ""}
+      <select class="input input-sm" data-cweather aria-label="날씨">${opts(CALC_WEATHER, calc.weather)}</select>
+      <select class="input input-sm" data-cterrain aria-label="필드">${opts(CALC_TERRAIN, calc.terrain)}</select>
+      <span class="calc-screens"><span class="muted small">${sideLabel(def)} 쪽 벽</span>
+        ${CALC_SCREENS.map(([v, n]) => `<label class="check"><input type="checkbox" data-cscreen="${v}" ${calc.screens.includes(v) ? "checked" : ""}> ${n}</label>`).join("")}</span>
+    </div>
+    ${calcFieldHint(o)}
+    <div class="calc-result">${calcResultHtml(o)}</div>`;
+  bindCalc(o);
+}
+let calcTimer = null, calcSeq = 0;
+function calcRefresh() {
+  clearTimeout(calcTimer);
+  calcTimer = setTimeout(async () => {
+    const seq = ++calcSeq;      // 늦게 도착한 이전 요청의 응답은 버린다 (공격 방향을 바꾼 직후 등)
+    const next = { stats: { me: null, opp: null }, statsError: { me: "", opp: "" }, result: null, error: "" };
+    const jobs = ["me", "opp"].filter((k) => calc[k].species).map((k) => api("/api/calc/stats", calcSetPayload(calc[k]))
+      .then((s) => { next.stats[k] = s; }).catch((e) => { next.statsError[k] = e.message; }));
+    const att = calc.dir, def = att === "me" ? "opp" : "me";
+    if (calc[att].species && calc[def].species && calc.move[att]) {
+      jobs.push(api("/api/calc/damage", { attacker: calcSetPayload(calc[att]), defender: calcSetPayload(calc[def]),
+        move: calc.move[att], hits: calc.hits[att], field: { weather: calc.weather, terrain: calc.terrain, screens: calc.screens } })
+        .then((r) => { next.result = r; }).catch((e) => { next.error = e.message; }));
+    }
+    await Promise.all(jobs);
+    if (seq !== calcSeq) return;
+    Object.assign(calc, next);
+    renderCalc();
+  }, 250);
+}
+function calcChanged(k, rerender = true) {
+  if (k) calc.filled[k] = false;      // 직접 바꾸면 '통계로 채움' 표시를 끈다
+  if (rerender) renderCalc();
+  calcRefresh();
+}
+function bindCalc(o) {
+  document.querySelectorAll("[data-cpick]").forEach((btn) => btn.addEventListener("click", async () => {
+    const k = btn.dataset.side, s = calc[k], kind = btn.dataset.cpick, sd = await speciesData(s.species);
+    if (kind === "species") {
+      const ty = (x) => (x.types || []).map((t) => TYPE_KO[t] || t).join("/");
+      const list = o.species.flatMap((x) => [{ ...x, note: ty(x) },
+        ...(o.megas || []).filter((m) => m.base === x.id).map((m) => ({ ...m, note: `메가 · ${ty(m)}` }))]);
+      openPicker(btn, list, async (p) => { await pickCalcSpecies(k, p); renderCalc(); calcRefresh(); }, { allowClear: false });
+    } else if (kind === "item") {
+      openPicker(btn, withPopular(o.items.map((x) => ({ ...x, note: x.mega ? "메가스톤" : x.berry ? "열매" : "" })), sd && sd.popular.items),
+        (p) => { s.item = p.id; if (s.form && p.id !== (megaOf(s) || {}).stone) s.form = ""; calcChanged(k); });
+    } else if (kind === "ability") {
+      openPicker(btn, withPopular(sd.abilities, sd.popular.abilities), (p) => { s.ability = p.id; calcChanged(k); });
+    } else if (kind === "nature") {
+      openPicker(btn, withPopular(o.natures, sd && sd.popular.natures), (p) => { s.nature = p.id; calcChanged(k); });
+    }
+  }));
+  const att = calc.dir;
+  const mbtn = document.querySelector("[data-cmove]");
+  if (mbtn) mbtn.addEventListener("click", async () => {
+    const sd = await speciesData(calc[att].species);
+    if (!sd) return;
+    const cat = (c) => (c === "Status" ? "변화" : c === "Physical" ? "물리" : "특수");
+    const list = sd.moves.map((m) => ({ ...m, note: `${TYPE_KO[m.type] || m.type} · ${cat(m.category)}${m.power ? " " + m.power : ""}` }));
+    openPicker(mbtn, withPopular(list, [...calc[att].moves, ...(sd.popular.moves || [])]), (p) => {
+      calc.move[att] = p.id; calc.hits[att] = null; calcChanged(null);
+    }, { allowClear: false });
+  });
+  document.querySelectorAll("[data-csp]").forEach((inp) => inp.addEventListener("change", () => {
+    const s = calc[inp.dataset.side], v = Math.max(0, Math.min(32, Number(inp.value) || 0));
+    if (v) s.evs[inp.dataset.csp] = v; else delete s.evs[inp.dataset.csp];
+    calcChanged(inp.dataset.side);
+  }));
+  document.querySelectorAll("[data-cboost]").forEach((sel) => sel.addEventListener("change", () => {
+    calc[sel.dataset.side].boosts[sel.dataset.cboost] = Number(sel.value); calcChanged(null, false);
+  }));
+  document.querySelectorAll("[data-cstatus]").forEach((sel) => sel.addEventListener("change", () => { calc[sel.dataset.cstatus].status = sel.value; calcChanged(null); }));
+  document.querySelectorAll("[data-chp]").forEach((inp) => inp.addEventListener("change", () => {
+    calc[inp.dataset.chp].hp_pct = Math.max(1, Math.min(100, Number(inp.value) || 100)); calcChanged(null);
+  }));
+  document.querySelectorAll("[data-cscreen]").forEach((cb) => cb.addEventListener("change", () => {
+    calc.screens = CALC_SCREENS.map(([v]) => v).filter((v) => document.querySelector(`[data-cscreen="${v}"]`).checked);
+    calcChanged(null, false);
+  }));
+  document.querySelectorAll("[data-cdir]").forEach((b) => b.addEventListener("click", () => { calc.dir = b.dataset.cdir; calc.result = null; calc.error = ""; calcChanged(null); }));
+  const hs = document.querySelector("[data-chits]");
+  if (hs) hs.addEventListener("change", () => { calc.hits[att] = Number(hs.value); calcChanged(null, false); });
+  document.querySelectorAll("[data-chint]").forEach((b) => b.addEventListener("click", () => {
+    calc[b.dataset.chint] = b.dataset.cval; calcChanged(null);
+  }));
+  document.querySelector("[data-cweather]").addEventListener("change", (e) => { calc.weather = e.target.value; calcChanged(null, false); });
+  document.querySelector("[data-cterrain]").addEventListener("change", (e) => { calc.terrain = e.target.value; calcChanged(null, false); });
+  const ts = document.querySelector("[data-cteam]");
+  if (ts) ts.addEventListener("change", async () => {
+    calc.team = ts.value;
+    calc.teamSets = ts.value ? (await api("/api/team/show", { name: ts.value }).catch((e) => { toast(e.message); return { sets: [] }; })).sets : [];
+    renderCalc();
+  });
+  document.querySelectorAll("[data-cmember]").forEach((b) => b.addEventListener("click", async () => {
+    const t = calc.teamSets[Number(b.dataset.cmember)];
+    await speciesData(t.species);
+    calc.me = { ...calcSide(), species: t.species, item: t.item, ability: t.ability, nature: t.nature, evs: { ...(t.evs || {}) }, moves: [...(t.moves || [])] };
+    calc.filled.me = false; calc.move.me = "";
+    renderCalc(); calcRefresh();
+  }));
+}
 
 // ---------------- 실전 ----------------
 const live = { id: null, picks: [], data: null };

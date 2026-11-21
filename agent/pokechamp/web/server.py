@@ -70,6 +70,8 @@ class App:
             "/api/team/show": self.team_show,
             "/api/team/save_sets": self.team_save_sets,
             "/api/team/parse_ids": self.team_parse_ids,
+            "/api/calc/damage": self.calc_damage,
+            "/api/calc/stats": self.calc_stats,
             "/api/live/estimate": lambda b: self._live(b).estimate(b.get("me") or {}, b.get("opp") or {}),
             "/api/live/turn": lambda b: json.loads(json.dumps(self._live(b).submit_turn(b.get("form") or {}), default=float)),
             "/api/live/replace": lambda b: json.loads(json.dumps(self._live(b).submit_replace(b.get("me"), b.get("opp"),
@@ -252,7 +254,7 @@ class App:
     def builder_options(self, q: dict) -> dict:
         v = active_version(self.conn)
         if v is None:
-            return {"species": [], "items": [], "natures": []}
+            return {"species": [], "items": [], "natures": [], "megas": []}
         species = [{"id": r["id"], "name": r["name_ko"] or r["name_en"], "name_en": r["name_en"], "sprite": sprite_id(r["name_en"]),
                     "types": json.loads(r["types_json"])}
                    for r in self.conn.execute("SELECT * FROM species WHERE version_id=? AND is_mega=0 ORDER BY num, form_index", (v["id"],))]
@@ -264,7 +266,13 @@ class App:
             up, down = self.NATURE_STATS.get(r["id"], (None, None))
             natures.append({"id": r["id"], "name": r["name_ko"] or r["name_en"], "name_en": r["name_en"],
                             "note": f"{self.STAT_KO[up]}↑ {self.STAT_KO[down]}↓" if up else "무보정"})
-        return {"species": species, "items": items, "natures": natures}
+        megas = [{"id": r["mega_species_id"], "base": r["base_species_id"], "stone": r["stone_item_id"],
+                  "name": r["name_ko"] or r["name_en"], "name_en": r["name_en"], "sprite": sprite_id(r["name_en"]),
+                  "types": json.loads(r["types_json"])}
+                 for r in self.conn.execute(
+                     "SELECT f.*, s.name_ko, s.name_en, s.types_json FROM mega_forms f JOIN species s"
+                     " ON s.version_id=f.version_id AND s.id=f.mega_species_id WHERE f.version_id=? ORDER BY s.num, s.form_index", (v["id"],))]
+        return {"species": species, "items": items, "natures": natures, "megas": megas}
 
     def builder_species(self, q: dict) -> dict:
         """그 포켓몬이 가질 수 있는 특성과 배울 수 있는 기술, 통계상 많이 쓰는 선택지 (위에 먼저 보인다)."""
@@ -303,23 +311,102 @@ class App:
                           "nature": re.sub(r"[^a-z0-9]", "", (p.nature or "").lower()), "evs": p.evs or {},
                           "moves": [re.sub(r"[^a-z0-9]", "", m.lower()) for m in p.moves]} for p in sets]}
 
+    def _set_from_ids(self, s: dict) -> dict:
+        """선택 상자의 id(species, item, ability, nature, moves) → 엔진·저장용 세트(영어 이름)."""
+        v = active_version(self.conn)
+        en = lambda table, x: (self.conn.execute(f"SELECT name_en FROM {table} WHERE version_id=? AND id=?", (v["id"], x)).fetchone()  # noqa: E731
+                               or [""])[0] if x else ""
+        return {"species": en("species", s.get("species")) or s.get("species", ""), "item": en("items", s.get("item")),
+                "ability": en("abilities", s.get("ability")), "nature": en("natures", s.get("nature")),
+                "evs": {k: int(x) for k, x in (s.get("evs") or {}).items() if str(x).strip() not in ("", "0")},
+                "moves": [en("moves", m) or m for m in (s.get("moves") or []) if m]}
+
+    # ---------- 계산기 (데미지 · 실수치) ----------
+    WEATHERS = {"sunnyday", "raindance", "sandstorm", "snowscape"}
+    TERRAINS = {"electricterrain", "grassyterrain", "psychicterrain", "mistyterrain"}
+    SCREENS = {"reflect", "lightscreen", "auroraveil"}
+    CALC_NOTES = ["n타 사이의 회복·잔여 데미지(먹다남은음식, 모래바람, 독 등)는 넣지 않습니다"]
+
+    def _calc_side(self, side: dict) -> dict:
+        out: dict[str, Any] = {"set": self._set_from_ids(side.get("set") or {})}
+        if side.get("mega"):
+            out["mega"] = True
+        boosts = {k: int(x) for k, x in (side.get("boosts") or {}).items() if int(x or 0)}
+        if boosts:
+            out["boosts"] = boosts
+        if side.get("status"):
+            out["status"] = side["status"]
+        if side.get("hp_pct") not in (None, "", 100):
+            out["hpPercent"] = max(1, min(100, int(side["hp_pct"])))
+        return out
+
+    def calc_damage(self, b: dict) -> dict:
+        """계산기: 엔진 /damage(난수 16단계) + 확정/난수 n타. 방어측 현재 HP(hp_pct) 기준."""
+        from pokechamp.calc.ko import ko_chances_hits
+        move = re.sub(r"[^a-z0-9]", "", str(b.get("move") or "").lower())
+        if not move:
+            raise ValueError("기술을 고르세요")
+        att, dfd = self._calc_side(b.get("attacker") or {}), self._calc_side(b.get("defender") or {})
+        f = b.get("field") or {}
+        field: dict[str, Any] = {k: v for k, v in (("weather", f.get("weather")), ("terrain", f.get("terrain")))
+                                 if v in (self.WEATHERS if k == "weather" else self.TERRAINS)}
+        screens = [s for s in (f.get("screens") or []) if s in self.SCREENS]
+        if screens:
+            field["screens"] = screens
+        r = self.client.batch("/damage", [{"attacker": att, "defender": dfd, "move": move, "field": field, "crossCheck": False}])[0]
+        if not r.get("ok"):
+            raise ValueError(r.get("error") or "데미지 계산 실패")
+        d = r["result"]
+        info = self.client.batch("/moves_info", [{"moves": [move]}])[0]["result"].get(move, {})
+        options = d.get("hitOptions") or [1]
+        default = options[-1] if d.get("attackerAbility") == "skilllink" else options[0]   # 스킬링크는 항상 최대 타수
+        hits = int(b["hits"]) if b.get("hits") and int(b["hits"]) in options else default
+        maxhp = d["defender"]["maxhp"]
+        hp = maxhp if "hpPercent" not in dfd else max(1, maxhp * dfd["hpPercent"] // 100)
+        per_hit = d["perHit"][:hits]
+
+        def part(key: str) -> dict:
+            hit_rolls = [h[key] for h in per_hit]
+            lo, hi = sum(x[0] for x in hit_rolls), sum(x[-1] for x in hit_rolls)
+            return {"min": lo, "max": hi, "min_pct": round(100 * lo / maxhp, 1), "max_pct": round(100 * hi / maxhp, 1),
+                    "rolls": hit_rolls[0], "ko": ko_chances_hits(hit_rolls, hp)}
+        return {"move": d["move"], "type": info.get("type"), "category": info.get("category"),
+                "attacker": d["attacker"], "defender": {**d["defender"], "hp": hp},
+                "immune": d["immune"], "status": d["status"], "effectiveness": d["typeEffectiveness"],
+                "normal": part("rolls"), "crit": part("critRolls"), "hits": hits, "hit_options": options, "per_hit": per_hit,
+                "notes": self.CALC_NOTES, "screens": screens}
+
+    def calc_stats(self, b: dict) -> dict:
+        req = {"set": self._set_from_ids(b.get("set") or {}), "mega": bool(b.get("mega"))}
+        if b.get("status"):
+            req["status"] = b["status"]
+        r = self.client.batch("/stats", [req])[0]
+        if not r.get("ok"):
+            raise ValueError(r.get("error") or "실수치 계산 실패")
+        return {**r["result"], "spe_status": r["result"].get("speStatus", r["result"]["spe"]),
+                "field_hint": self._field_hint(r["result"].get("ability") or "")}
+
+    def _field_hint(self, ability: str) -> dict | None:
+        """날씨·필드를 까는 특성이면 그 날씨·필드 (계산기는 자동으로 켜지 않고 안내만 한다: 턴이 지나거나 덮일 수 있다)."""
+        from pokechamp.battle.live import TERRAIN_SETTERS, WEATHER_SETTERS
+        w = {"sun": "sunnyday", "rain": "raindance", "sand": "sandstorm", "snow": "snowscape"}
+        t = {"electric": "electricterrain", "psychic": "psychicterrain", "grassy": "grassyterrain", "misty": "mistyterrain"}
+        if ability in WEATHER_SETTERS:
+            return {"weather": w[WEATHER_SETTERS[ability]], "ability": ability}
+        if ability in TERRAIN_SETTERS:
+            return {"terrain": t[TERRAIN_SETTERS[ability]], "ability": ability}
+        return None
+
     def team_save_sets(self, b: dict) -> dict:
         """선택 방식으로 만든 팀 저장: 칸마다 id(species, item, ability, nature, moves)와 Stat Points(evs)."""
         name = (b.get("name") or "").strip()
         if not name:
             raise ValueError("팀 이름을 넣으세요")
-        v = active_version(self.conn)
-        en = {}
-        for table in ("species", "items", "abilities", "natures", "moves"):
-            en[table] = {r[0]: r[1] for r in self.conn.execute(f"SELECT id, name_en FROM {table} WHERE version_id=?", (v["id"],))}
         team, notes = [], []
         for i, s in enumerate(b.get("sets") or []):
             if not s.get("species"):
                 continue
-            st = {"species": en["species"].get(s["species"], s["species"]), "item": en["items"].get(s.get("item") or "", ""),
-                  "ability": en["abilities"].get(s.get("ability") or "", ""), "nature": en["natures"].get(s.get("nature") or "", ""),
-                  "evs": {k: int(x) for k, x in (s.get("evs") or {}).items() if str(x).strip() not in ("", "0")},
-                  "moves": [en["moves"].get(m, m) for m in (s.get("moves") or []) if m]}
+            st = self._set_from_ids(s)
             missing = [k for k, label in (("item", "도구"), ("ability", "특성"), ("nature", "성격")) if not st[k]]
             if len(st["moves"]) < 4:
                 missing.append("moves")

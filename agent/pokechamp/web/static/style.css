@@ -351,3 +351,50 @@ main { padding: 22px 28px 60px; max-width: 1360px; margin: 0 auto; }
 .slot-sp input { width: 100%; box-sizing: border-box; padding: 3px; text-align: center; }
 .slot-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; align-items: center; }
 .panel-sub { margin-top: 10px; }
+
+/* ---------- 계산기 ---------- */
+.calc-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+.calc-card { display: grid; gap: 10px; align-content: start; }
+.calc-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.calc-team { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.calc-team select { width: auto; }
+.calc-member { padding: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); cursor: pointer; line-height: 0; }
+.calc-member img { width: 40px; height: 40px; }
+.calc-member:hover { border-color: var(--blue); }
+.calc-mon { display: flex; align-items: center; gap: 10px; }
+.calc-mon img, .calc-mon-empty { width: 64px; height: 64px; flex: none; }
+.calc-mon-empty { border-radius: 50%; background: var(--bg); }
+.calc-mon-main { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.calc-fields { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 10px; align-items: center; }
+.calc-fields .lbl { font-size: 13px; color: var(--ink-2); }
+.calc-inline { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.calc-inline .picker-btn { flex: 1; min-width: 0; }
+/* H·A·B·C·D·S 한 줄: 위 SP 입력, 아래 실수치 */
+.calc-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.calc-stats label { display: grid; gap: 2px; justify-items: center; font-size: 12px; color: var(--ink-2); }
+.calc-stats input { width: 100%; text-align: center; padding: 4px 2px; }
+.calc-stats b { font-size: 15px; color: var(--ink); }
+.calc-mods { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 13px; color: var(--ink-2); }
+.calc-mods label { display: inline-flex; align-items: center; gap: 4px; }
+.calc-mods .input-sm { width: auto; }
+.calc-mods input.input-sm { width: 64px; }
+.calc-speed-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; font-size: 15px; }
+.calc-speed-row > span:first-child { font-weight: 700; }
+.calc-speed-row b { font-size: 22px; letter-spacing: -0.02em; }
+.calc-win b { color: var(--blue); }
+.calc-dir, .calc-dmg-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.calc-dmg-controls .picker-btn { min-width: 200px; }
+.calc-dmg-controls label { display: inline-flex; gap: 4px; align-items: center; font-size: 13px; color: var(--ink-2); }
+.calc-dmg-controls .input-sm { width: auto; }
+.calc-result { display: grid; gap: 6px; }
+/* 판정(확정/난수 n타)이 이 화면의 주인공이다 */
+.calc-ko { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
+.calc-dmg { font-size: 17px; font-weight: 500; }
+.calc-hpbar { display: flex; height: 14px; border-radius: 999px; background: var(--line); overflow: hidden; max-width: 520px; }
+.calc-hpbar .rest { background: var(--hp-hi); }
+.calc-hpbar .range { background: repeating-linear-gradient(45deg, var(--hp-mid) 0 6px, var(--amber-soft) 6px 12px); }
+.calc-rolls { word-break: break-all; }
+@media (max-width: 900px) { .calc-grid { grid-template-columns: minmax(0, 1fr); } }
+.calc-screens { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.calc-hint { margin: -2px 0 10px; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--amber-soft); }
+.calc-hint p { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
