@@ -179,8 +179,9 @@ class Priors:
         return d
 
     # ---------- 포켓몬 출현 가중치와 추세 ----------
-    def species_weights(self) -> dict[str, float]:
-        """출현 가중치(합 1). 출처가 사용률 대신 순위만 주므로 w ∝ 1/순위^지수 로 추정한 값이다."""
+    def species_weights(self, local: bool = True) -> dict[str, float]:
+        """출현 가중치(합 1). 출처가 사용률 대신 순위만 주므로 w ∝ 1/순위^지수 로 추정한 값이다.
+        local이면 내 실제 배틀 기록(로컬 메타)을 디리클레 사후로 섞는다 (data/local_meta.py)."""
         latest = self._latest_ranked()
         if latest is None:
             return {}
@@ -189,7 +190,18 @@ class Priors:
             "SELECT species_id, rank_position FROM usage_species WHERE snapshot_id=? AND rank_position IS NOT NULL", (latest.id,))}
         w = {s: 1.0 / (rank ** a) for s, rank in ranks.items()}
         tot = sum(w.values()) or 1.0
-        return {s: v / tot for s, v in sorted(w.items(), key=lambda kv: -kv[1])}
+        pub = {s: v / tot for s, v in sorted(w.items(), key=lambda kv: -kv[1])}
+        if not local:
+            return pub
+        from pokechamp.data.local_meta import blend_weights, local_records, species_counts
+        recs = local_records(self.conn, self.regulation)
+        if not recs:
+            return pub
+        return blend_weights(pub, species_counts(recs), len(recs), float(self.cfg["local_meta_strength"]))
+
+    def local_meta_size(self) -> int:
+        from pokechamp.data.local_meta import local_records
+        return len(local_records(self.conn, self.regulation))
 
     def _ranked(self) -> list[_Snap]:
         if not self.current:

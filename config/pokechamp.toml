@@ -31,6 +31,11 @@ trend_max_gap_days = 14
 previous_regulation_weight = 0.2
 # 출처는 사용률(%) 대신 순위만 준다. 포켓몬 출현 가중치를 순위로 추정: w ∝ 1 / 순위^지수
 rank_weight_exponent = 1.0
+# 로컬 메타 (PROJECT_PLAN 4.5): 내 실제 배틀(my_battles, manual)의 상대 팀을 공개 통계와 섞는다.
+# 공개 통계를 배틀 이 판 수 분량의 사전으로 둔다 (판이 쌓일수록 로컬 비중이 커진다)
+local_meta_strength = 30
+# 상대 선출률 추정: 사전 0.5를 이 판 수 분량으로 둔다 (표본이 적으면 0.5에 가깝다)
+local_bring_prior_n = 4
 
 [sets]
 # 세트 원형 만들기 (PROJECT_PLAN 4.7)

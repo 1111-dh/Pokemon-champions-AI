@@ -7,7 +7,8 @@
 - 행동 순서: 같은 우선도로 양쪽이 기술을 썼을 때 실제 스피드(랭크·스카프·마비·날씨 스피드 특성)로 순서가 맞는지.
   모델 밖 효과(선제의손톱, 순풍, 트릭룸 등)를 위해 ε을 섞는다.
 - 데미지: 기술 바로 뒤의 상대 HP 변화를 /damage(16단계 난수 + 급소)로 계산한 분포와 맞춰 본다.
-  내 HP는 정확한 값(±1), 상대 HP는 % 반올림을 고려해 ±1.5%p를 허용한다. 연속기·고정 데미지 기술은 쓰지 않는다. ε을 섞는다.
+  내 HP는 정확한 값(±1), 상대 HP는 % 반올림을 고려해 ±1.5%p를 허용한다. 연속기·고정 데미지 기술은 쓰지 않는다.
+  ε 0.3을 섞는다: ε 0.05에서는 모델 밖 요인 때문에 틀린 도구를 과신했다(보정 곡선, docs/VERIFIED.md).
 유효 파티클 수가 기준 아래로 떨어지면 재샘플링하고, 모든 가중치가 0이 되면 갱신을 되돌리고 모순 입력으로 알린다.
 """
 
@@ -88,7 +89,7 @@ class MonBelief:
 
 class Belief:
     def __init__(self, conn, opp_species: list[str], client: EngineClient | None = None, n: int = 48, seed: str = "belief",
-                 regulation: str | None = None, eps_speed: float = 0.03, eps_damage: float = 0.05):
+                 regulation: str | None = None, eps_speed: float = 0.03, eps_damage: float = 0.3):
         self.client = client or EngineClient()
         self.rng = random.Random(f"{seed}-belief")
         self.n, self.eps_speed, self.eps_damage = n, eps_speed, eps_damage
