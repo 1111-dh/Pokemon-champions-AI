@@ -310,3 +310,6 @@ button.mon-chip[aria-pressed="true"] { border-color: var(--blue); box-shadow: in
 .bar span { display: block; height: 100%; background: var(--blue); border-radius: 3px; }
 .pick-mons { display: flex; gap: 2px; align-items: center; }
 .pick-mons .lead { outline: 2px solid var(--blue); border-radius: 6px; }
+
+/* 복기 */
+.review-chart svg { max-width: 100%; height: auto; background: #fff; border-radius: var(--radius-sm); }

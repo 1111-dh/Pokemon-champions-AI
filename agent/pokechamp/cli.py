@@ -416,6 +416,28 @@ def cmd_battle(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_review(args: argparse.Namespace) -> int:
+    from pokechamp.battle.review import review, text_report
+    from pokechamp.battle.search import SearchConfig
+    from pokechamp.battle.store import list_battles
+    conn = connect()
+    if args.list or args.battle is None:
+        rows = list_battles(conn)
+        if not rows:
+            print("저장한 배틀 기록이 없다 (pokechamp battle로 배틀을 진행하면 저장된다).")
+        for r in rows:
+            print(f"#{r['id']} {r['played_at'][:16]} {r['source']} 결과 {r['result'] or '-'} · 상대 {', '.join(r['opp'])}")
+        return 0
+    try:
+        r = review(conn, args.battle, cfg=SearchConfig(seed=f"review-{args.battle}", samples=args.samples, model_reps=args.reps),
+                   log=lambda s: print(s, file=sys.stderr, flush=True))
+    except ValueError as e:
+        print(e)
+        return 1
+    print(text_report(r, conn))
+    return 0
+
+
 def cmd_rollback_static(args: argparse.Namespace) -> int:
     from pokechamp.data.static.update import activate_version
     conn = connect()
@@ -513,6 +535,12 @@ def main(argv: list[str] | None = None) -> int:
     ba.add_argument("--seed", help="시드 (기본은 시각)")
     ba.add_argument("--no-select", action="store_true", help="선출 추천을 건너뜀")
     ba.set_defaults(fn=cmd_battle)
+    rv = sub.add_parser("review", help="복기: 저장한 배틀의 턴별 승률 그래프와 실수 후보 (인자 없으면 기록 목록)")
+    rv.add_argument("battle", nargs="?", help="배틀 번호 또는 latest")
+    rv.add_argument("--list", action="store_true", help="기록 목록")
+    rv.add_argument("--samples", type=int, default=8, help="턴마다 상대 세트 샘플 수")
+    rv.add_argument("--reps", type=int, default=6, help="행동·샘플마다 롤아웃 판 수")
+    rv.set_defaults(fn=cmd_review)
     rb = sub.add_parser("rollback-static", help="이전 정적 데이터 버전으로 되돌리기")
     rb.add_argument("version", type=int)
     rb.set_defaults(fn=cmd_rollback_static)

@@ -35,7 +35,8 @@ HELP = """입력 형식 (문장은 '/'나 줄바꿈으로 구분, 포켓몬 이�
 class TextBattle:
     def __init__(self, conn, my_team: list[dict], opp_species: list[str], client=None,
                  ask: Callable[[str], str] = input, say: Callable[[str], None] = print,
-                 cfg: SearchConfig | None = None, seed: str | None = None, log_dir: Path | None = None):
+                 cfg: SearchConfig | None = None, seed: str | None = None, log_dir: Path | None = None,
+                 source: str = "manual"):
         self.conn, self.ask, self.say = conn, ask, say
         self.my_team, self.opp_species = my_team, opp_species
         self.seed = seed or datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -43,6 +44,7 @@ class TextBattle:
         self.bt = BattleText(conn)
         self.client = client
         self.log_dir = log_dir or ROOT / "data" / "logs" / "battles"
+        self.source = source
         self.record: dict[str, Any] = {"started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                                        "seed": self.seed, "my_team": my_team, "opp_species": opp_species, "turns": []}
 
@@ -212,6 +214,9 @@ class TextBattle:
         path = self.log_dir / f"battle-{self.seed}.json"
         self.record["ended_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         path.write_text(json.dumps(self.record, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
-        self.say(f"기록을 저장했다: {path}")
+        from pokechamp.battle.store import save_battle
+        bid = save_battle(self.conn, self.record, self.sess, self.source)
+        self.record["battle_id"] = bid
+        self.say(f"기록을 저장했다: {path} (my_battles #{bid}, 복기: pokechamp review {bid})")
         self.record["path"] = str(path)
         return self.record
