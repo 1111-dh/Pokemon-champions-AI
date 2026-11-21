@@ -259,3 +259,25 @@ def test_persistent_and_consumable_items_in_estimates(conn):
     lb.submit_turn({"first": "opp", "me": {"kind": "move", "move": "surf"}, "opp": {"kind": "move", "move": "shadowball"},
                     "my_hp": 40, "opp_hp": 30, "extras": {"opp_item": "자뭉열매"}}) if not lb.sess.state.opp.mons["gholdengo"].fainted else None
     lb.end("aborted", save=False)
+
+
+def test_team_builder_api(conn):
+    from pokechamp.teams.store import list_teams
+    from pokechamp.web.server import App
+    a = App()
+    o = a.builder_options({})
+    assert len(o["species"]) > 200 and o["items"] and any(n["note"] == "공격↑ 방어↓" for n in o["natures"])
+    s = a.builder_species({"id": ["garchomp"]})
+    assert {"roughskin", "sandveil"} <= {x["id"] for x in s["abilities"]}
+    assert "earthquake" in {m["id"] for m in s["moves"]} and s["popular"]["moves"]
+    assert isinstance(s["popular"]["spreads"][0], dict)
+    sets = [{"species": "garchomp", "item": "choicescarf", "ability": "roughskin", "nature": "jolly",
+             "evs": {"hp": 2, "atk": 32, "spe": 32}, "moves": ["earthquake", "outrage", "rockslide", "firefang"]}]
+    r = a.team_save_sets({"name": "_pytest_빌더", "sets": sets, "replace": True})
+    assert r["name"] == "_pytest_빌더" and any("6" in p for p in r["problems"])          # 6마리 미만 경고만 (저장은 됨)
+    shown = a.team_show({"name": "_pytest_빌더"})
+    assert shown["sets"][0]["species"] == "garchomp" and shown["sets"][0]["moves"][0] == "earthquake"
+    parsed = a.team_parse_ids({"text": shown["export"]})
+    assert parsed["sets"][0]["item"] == "choicescarf" and parsed["sets"][0]["nature"] == "jolly"
+    a.team_delete({"name": "_pytest_빌더"})
+    assert not any(t["name"] == "_pytest_빌더" for t in list_teams(conn))

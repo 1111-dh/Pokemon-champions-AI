@@ -56,7 +56,13 @@ function showTab(name) {
   document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
   document.querySelectorAll(".tab-panel").forEach((p) => { p.hidden = p.id !== `tab-${name}`; });
   history.replaceState(null, "", `#${name}`);
-  if (!loaded[name]) { loaded[name] = true; ({ progress: loadProgress, dex: loadDex, news: loadNews, team: loadTeams })[name]?.(); }
+  if (!loaded[name]) { loaded[name] = true; ({ progress: loadProgress, dex: loadDex, news: loadNews })[name]?.(); }
+  // 탭을 열 때마다 (클릭이든 새로고침으로 주소 #탭에서 바로 열리든) 목록을 새로 불러온다
+  ({
+    team: () => { loadTeams(); if (!builder.options) renderBuilder(); },
+    live: loadLiveTeams,
+    review: loadBattles,
+  })[name]?.();
 }
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
@@ -340,6 +346,173 @@ $("#team-random").addEventListener("click", (ev) => withBusy(ev.currentTarget, a
   const r = await api("/api/team/random", {});
   $("#team-text").value = r.text.trim();
 }));
+// ---------------- 검색 가능한 선택 상자 ----------------
+// options: [{id, name, name_en?, note?, sprite?, popular?}] — popular가 참이면 위에 '많이 씀'으로 먼저 보인다
+function pickerBtn(attrs, label, placeholder) {
+  return `<button type="button" class="picker-btn" ${attrs}>${label ? esc(label) : `<span class="muted">${esc(placeholder || "선택")}</span>`}<span class="caret">▾</span></button>`;
+}
+function closePicker() {
+  document.querySelectorAll(".picker-pop").forEach((p) => p.remove());
+  document.removeEventListener("mousedown", pickerOutside, true);
+}
+function pickerOutside(e) {
+  const pop = document.querySelector(".picker-pop");
+  if (pop && !pop.contains(e.target) && !e.target.closest(".picker-btn")) closePicker();
+}
+function openPicker(btn, options, onPick, { allowClear = true } = {}) {
+  closePicker();
+  const pop = document.createElement("div");
+  pop.className = "picker-pop";
+  pop.innerHTML = `<input class="input picker-search" placeholder="검색 (한국어·영어)"><div class="picker-list"></div>`;
+  document.body.appendChild(pop);
+  const r = btn.getBoundingClientRect();
+  const width = Math.min(320, document.documentElement.clientWidth - 16);
+  pop.style.width = width + "px";
+  pop.style.top = window.scrollY + r.bottom + 4 + "px";
+  pop.style.left = Math.max(8, Math.min(window.scrollX + r.left, window.scrollX + document.documentElement.clientWidth - width - 8)) + "px";
+  const list = pop.querySelector(".picker-list"), search = pop.querySelector(".picker-search");
+  const norm = (x) => String(x || "").toLowerCase().replace(/[\s\-·()']/g, "");
+  const render = () => {
+    const q = norm(search.value);
+    const hit = (o) => !q || norm(o.name).includes(q) || norm(o.name_en).includes(q) || norm(o.id).includes(q);
+    const pop1 = options.filter((o) => o.popular && hit(o)), rest = options.filter((o) => !o.popular && hit(o));
+    const row = (o) => `<div class="picker-item" data-id="${esc(o.id)}">${o.sprite ? sprite(o.sprite) : ""}<span>${esc(o.name)}</span>${o.note ? `<span class="muted small">${esc(o.note)}</span>` : ""}</div>`;
+    list.innerHTML = (allowClear && !q ? `<div class="picker-item clear" data-id="">(비우기)</div>` : "")
+      + (pop1.length ? `<div class="picker-group">많이 씀</div>${pop1.map(row).join("")}` : "")
+      + (rest.length ? `${pop1.length ? `<div class="picker-group">전체</div>` : ""}${rest.slice(0, 300).map(row).join("")}` : "")
+      + (!pop1.length && !rest.length ? `<div class="muted picker-empty">찾는 항목이 없습니다</div>` : "");
+    list.querySelectorAll(".picker-item").forEach((el) => el.addEventListener("click", () => {
+      const o = options.find((x) => x.id === el.dataset.id) || { id: "", name: "" };
+      closePicker(); onPick(o);
+    }));
+  };
+  search.addEventListener("input", render);
+  search.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closePicker();
+    if (e.key === "Enter") { const first = list.querySelector(".picker-item:not(.clear)"); if (first) first.click(); }
+  });
+  render(); search.focus();
+  setTimeout(() => document.addEventListener("mousedown", pickerOutside, true), 0);
+}
+const withPopular = (all, popularIds) => {
+  const order = new Map((popularIds || []).map((id, i) => [id, i]));
+  return all.map((o) => ({ ...o, popular: order.has(o.id), _o: order.get(o.id) ?? 999 })).sort((a, b) => a._o - b._o);
+};
+
+// ---------------- 팀 만들기 (선택 방식) ----------------
+const STAT_KEYS = [["hp", "HP"], ["atk", "공격"], ["def", "방어"], ["spa", "특공"], ["spd", "특방"], ["spe", "스피드"]];
+const builder = { options: null, speciesData: {}, slots: Array.from({ length: 6 }, () => emptySlot()) };
+function emptySlot() { return { species: "", item: "", ability: "", nature: "", evs: {}, moves: ["", "", "", ""] }; }
+async function builderOptions() {
+  if (!builder.options) builder.options = await api("/api/builder/options");
+  return builder.options;
+}
+async function speciesData(id) {
+  if (!id) return null;
+  if (!builder.speciesData[id]) builder.speciesData[id] = await api(`/api/builder/species?id=${encodeURIComponent(id)}`);
+  return builder.speciesData[id];
+}
+const nameOf = (list, id) => (list.find((x) => x.id === id) || {}).name || "";
+async function renderBuilder() {
+  const o = await builderOptions();
+  const cards = await Promise.all(builder.slots.map(async (sl, i) => {
+    const sd = await speciesData(sl.species);
+    const sp = o.species.find((x) => x.id === sl.species);
+    const total = STAT_KEYS.reduce((t, [k]) => t + (Number(sl.evs[k]) || 0), 0);
+    const over = total > 66 || STAT_KEYS.some(([k]) => (Number(sl.evs[k]) || 0) > 32);
+    return `<div class="slot-card">
+      <div class="slot-head">${sp ? sprite(sp.sprite) : `<span class="slot-num">${i + 1}</span>`}
+        ${pickerBtn(`data-bpick="species" data-slot="${i}"`, sp && sp.name, "포켓몬 고르기")}</div>
+      ${sl.species ? `
+      <div class="slot-row"><span class="lbl">도구</span>${pickerBtn(`data-bpick="item" data-slot="${i}"`, nameOf(o.items, sl.item), "도구")}</div>
+      <div class="slot-row"><span class="lbl">특성</span>${pickerBtn(`data-bpick="ability" data-slot="${i}"`, nameOf(sd ? sd.abilities : [], sl.ability), "특성")}</div>
+      <div class="slot-row"><span class="lbl">성격</span>${pickerBtn(`data-bpick="nature" data-slot="${i}"`, nameOf(o.natures, sl.nature) && `${nameOf(o.natures, sl.nature)} (${(o.natures.find((x) => x.id === sl.nature) || {}).note})`, "성격")}</div>
+      <div class="slot-moves">${[0, 1, 2, 3].map((k) => pickerBtn(`data-bpick="move" data-slot="${i}" data-k="${k}"`, nameOf(sd ? sd.moves : [], sl.moves[k]), `기술 ${k + 1}`)).join("")}</div>
+      <div class="slot-sp">${STAT_KEYS.map(([k, n]) => `<label>${n}<input type="number" min="0" max="32" class="input" data-sp="${k}" data-slot="${i}" value="${sl.evs[k] || ""}"></label>`).join("")}</div>
+      <div class="slot-foot"><span class="${over ? "err" : "muted"} small">SP 합계 ${total}/66${over ? " · 능력치당 32, 합계 66을 넘었습니다" : ""}</span>
+        <span><button class="btn btn-sm" data-bfill="${i}">많이 쓰는 세트로 채우기</button> <button class="btn btn-sm" data-bclear="${i}">비우기</button></span></div>` : ""}
+    </div>`;
+  }));
+  $("#builder").innerHTML = cards.join("");
+  bindBuilder();
+}
+function bindBuilder() {
+  const o = builder.options;
+  document.querySelectorAll("[data-bpick]").forEach((btn) => btn.addEventListener("click", async () => {
+    const i = Number(btn.dataset.slot), sl = builder.slots[i], kind = btn.dataset.bpick;
+    const sd = await speciesData(sl.species);
+    if (kind === "species") {
+      openPicker(btn, o.species.map((x) => ({ ...x, note: (x.types || []).join("/") })), async (p) => {
+        builder.slots[i] = { ...emptySlot(), species: p.id };
+        if (p.id) {
+          const d = await speciesData(p.id);
+          if (d.abilities.length === 1 || (d.popular.abilities || []).length) builder.slots[i].ability = d.popular.abilities[0] || d.abilities[0].id;
+        }
+        renderBuilder();
+      });
+    } else if (kind === "item") {
+      openPicker(btn, withPopular(o.items.map((x) => ({ ...x, note: x.mega ? "메가스톤" : x.berry ? "열매" : "" })), sd && sd.popular.items), (p) => { sl.item = p.id; renderBuilder(); });
+    } else if (kind === "ability") {
+      openPicker(btn, withPopular(sd.abilities, sd.popular.abilities), (p) => { sl.ability = p.id; renderBuilder(); });
+    } else if (kind === "nature") {
+      openPicker(btn, withPopular(o.natures, sd && sd.popular.natures), (p) => { sl.nature = p.id; renderBuilder(); });
+    } else if (kind === "move") {
+      const k = Number(btn.dataset.k);
+      const taken = sl.moves.filter((m, j) => m && j !== k);
+      const opts = sd.moves.filter((m) => !taken.includes(m.id)).map((m) => ({ ...m, note: `${m.type} · ${m.category === "Status" ? "변화" : m.category === "Physical" ? "물리" : "특수"}${m.power ? " " + m.power : ""}` }));
+      openPicker(btn, withPopular(opts, sd.popular.moves), (p) => { sl.moves[k] = p.id; renderBuilder(); });
+    }
+  }));
+  document.querySelectorAll("[data-sp]").forEach((inp) => inp.addEventListener("change", () => {
+    const sl = builder.slots[Number(inp.dataset.slot)];
+    const v = Math.max(0, Math.min(32, Number(inp.value) || 0));
+    if (v) sl.evs[inp.dataset.sp] = v; else delete sl.evs[inp.dataset.sp];
+    renderBuilder();
+  }));
+  document.querySelectorAll("[data-bclear]").forEach((b) => b.addEventListener("click", () => { builder.slots[Number(b.dataset.bclear)] = emptySlot(); renderBuilder(); }));
+  document.querySelectorAll("[data-bfill]").forEach((b) => b.addEventListener("click", async () => {
+    const i = Number(b.dataset.bfill), sl = builder.slots[i], d = await speciesData(sl.species), p = d.popular;
+    const usedItems = builder.slots.filter((x, j) => j !== i).map((x) => x.item);
+    sl.item = (p.items || []).find((x) => !usedItems.includes(x)) || sl.item;
+    sl.ability = (p.abilities || [])[0] || sl.ability;
+    sl.nature = (p.natures || [])[0] || sl.nature;
+    if ((p.spreads || [])[0]) sl.evs = Object.fromEntries(Object.entries(p.spreads[0]).filter(([, v]) => v));
+    const learn = new Set(d.moves.map((m) => m.id));
+    sl.moves = [...(p.moves || []).filter((m) => learn.has(m)).slice(0, 4), "", "", "", ""].slice(0, 4);
+    renderBuilder();
+  }));
+}
+const builderSets = () => builder.slots.filter((s) => s.species).map((s) => ({ ...s, moves: s.moves.filter(Boolean) }));
+function builderResult(r) {
+  $("#builder-result").innerHTML = `<div class="panel ${r.valid ? "" : "warn-box"}">
+    <p>${r.name ? `'${esc(r.name)}' 저장함 · ` : ""}${r.valid === null ? "엔진 검증을 건너뛰었습니다" : r.valid ? "규칙 통과" : "규칙 위반 경고 (팀은 그대로 쓸 수 있습니다)"}</p>
+    ${(r.problems || []).map((p) => `<p class="small">${esc(p)}</p>`).join("")}${(r.notes || []).map((n) => `<p class="small muted">${esc(n)}</p>`).join("")}</div>`;
+}
+$("#builder-check").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+  builderResult(await api("/api/team/save_sets", { name: "검증", sets: builderSets(), check_only: true }));
+}));
+$("#builder-save").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+  const name = $("#builder-name").value.trim();
+  if (!name) { toast("팀 이름을 넣으세요."); return; }
+  builderResult(await api("/api/team/save_sets", { name, sets: builderSets(), replace: $("#builder-replace").checked }));
+  loadTeams();
+}));
+$("#builder-clear").addEventListener("click", () => { builder.slots = Array.from({ length: 6 }, () => emptySlot()); $("#builder-name").value = ""; renderBuilder(); });
+function loadIntoBuilder(sets, name) {
+  builder.slots = Array.from({ length: 6 }, (_, i) => {
+    const s = sets[i];
+    return s ? { species: s.species, item: s.item || "", ability: s.ability || "", nature: s.nature || "", evs: { ...(s.evs || {}) },
+      moves: [...(s.moves || []), "", "", "", ""].slice(0, 4) } : emptySlot();
+  });
+  if (name !== undefined) { $("#builder-name").value = name; $("#builder-replace").checked = true; }
+  renderBuilder();
+  document.getElementById("builder").scrollIntoView({ behavior: "smooth" });
+}
+$("#team-to-builder").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+  const r = await api("/api/team/parse_ids", { text: $("#team-text").value });
+  loadIntoBuilder(r.sets, $("#team-name").value.trim() || undefined);
+}));
+
 function teamResultHtml(r, saved) {
   const names = r.team.map((x) => esc(x.species) + (x.filled ? " (기본값 채움)" : "")).join(", ");
   const state = r.valid === null ? `<span class="state-badge">검증 건너뜀</span>`
@@ -373,7 +546,7 @@ async function loadTeams() {
         ${t.valid === 0 ? ` · ⚠️ 경고 ${t.problems.length}개` : ""}</span>
         <div class="pick-mons">${t.team.map((x) => sprite(spriteOf(x.species))).join("")}</div></div>
       <div class="team-actions"><button class="btn btn-sm" data-tshow="${esc(t.name)}">보기</button>
-        <button class="btn btn-sm" data-tload="${esc(t.name)}">편집으로 불러오기</button>
+        <button class="btn btn-sm" data-tload="${esc(t.name)}">편집</button>
         <button class="btn btn-sm" data-tdel="${esc(t.name)}">삭제</button></div>
       <div class="team-detail" id="tdetail-${esc(t.name)}"></div></li>`).join("") : `<li class="muted">아직 없습니다. 왼쪽에 팀을 붙여 넣고 이름을 정해 저장하세요.</li>`;
     document.querySelectorAll("[data-tshow]").forEach((b) => b.addEventListener("click", async () => {
@@ -387,8 +560,8 @@ async function loadTeams() {
     }));
     document.querySelectorAll("[data-tload]").forEach((b) => b.addEventListener("click", async () => {
       const d = await api("/api/team/show", { name: b.dataset.tload });
-      $("#team-text").value = d.export; $("#team-name").value = d.name; $("#team-replace").checked = true;
-      toast("왼쪽 칸에 불러왔습니다. 고친 뒤 '팀 저장'을 누르면 덮어씁니다.");
+      loadIntoBuilder(d.sets, d.name);
+      toast("팀 만들기 칸에 불러왔습니다. 고친 뒤 '팀 저장'을 누르면 덮어씁니다.");
     }));
     document.querySelectorAll("[data-tdel]").forEach((b) => b.addEventListener("click", async () => {
       if (!confirm(`'${b.dataset.tdel}' 팀을 지울까요? 되돌릴 수 없습니다.`)) return;
@@ -561,7 +734,6 @@ async function loadLiveTeams() {
     if (cur && teams.some((t) => t.name === cur)) $("#live-team").value = cur;
   } catch (e) { toast(e.message); }
 }
-document.querySelector('.tabs button[data-tab="live"]').addEventListener("click", loadLiveTeams);
 
 $("#live-select").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
   if (!$("#live-team").value) { toast("먼저 팀을 저장하세요."); return; }
@@ -632,6 +804,7 @@ function monCard(m, mine) {
       ${m.active ? ` <span class="state-badge">출전</span>` : ""}</div>
     ${mine || m.seen ? `${hpBar(m.fainted ? 0 : m.hp)}<div class="muted">${hp}${m.status ? ` · ${esc(m.status)}` : ""}${boosts ? ` · ${esc(boosts)}` : ""}</div>` : `<div class="muted">아직 안 나옴</div>`}
     ${m.moves && m.moves.length ? `<div class="muted small">${esc(m.moves.join(", "))}</div>` : ""}
+    ${mine && m.moves_note ? `<div class="muted small">${esc(m.moves_note)}</div>` : ""}
     ${!mine && (m.item || m.ability) ? `<div class="muted small">${esc([m.item && (m.item + (m.item_consumed ? "(사용)" : "")), m.ability].filter(Boolean).join(" · "))}</div>` : ""}</div></div>`;
 }
 function entryBoxes(opts, chosen, attr) {
@@ -640,6 +813,7 @@ function entryBoxes(opts, chosen, attr) {
     ${chosen.includes(o.key) ? "checked" : ""}> ${esc(o.name)} <span class="muted">(${pct0(o.p)})</span></label>`).join(" ")}
     <span class="muted small">위협은 내 공격 −1, 날씨·필드 특성은 날씨·필드, 풍선은 맞으면 터짐까지 자동으로 넣습니다.</span></div>`;
 }
+const isSwapMove = (a) => a && a.kind === "move" && ["trick", "switcheroo", "트릭", "바꿔치기"].includes(String(a.move || "").trim());
 const defaults = (opts) => (opts || []).filter((o) => o.default).map((o) => o.key);
 const STATUS_OPTS = [["", "-"], ["brn", "화상"], ["par", "마비"], ["slp", "잠듦"], ["frz", "얼음"], ["psn", "독"], ["tox", "맹독"]];
 const WEATHER_OPTS = [["", "-"], ["sun", "쾌청"], ["rain", "비"], ["sand", "모래바람"], ["snow", "설경"], ["none", "날씨 끝"]];
@@ -687,11 +861,16 @@ function renderLive(v) {
         ${f.my_can_mega ? `<label class="check"><input type="checkbox" id="f-mymega" ${F.me.mega ? "checked" : ""}> 메가진화</label>` : ""}
         <span class="sep"></span>${mySw}<button class="opt${sel(F.me.kind === "none")}" data-my="none:">못 움직임</button></div>
       <div class="frow"><span class="flabel">상대 행동</span>${oppMoves}
-        <input id="f-oppother" class="input input-sm" list="f-oppmoves" placeholder="다른 기술" value="${F.opp.kind === "move" && !(f.opp_moves || []).some((m) => m.id === F.opp.move) ? esc(F.opp.move || "") : ""}">
-        <datalist id="f-oppmoves">${(f.opp_all_moves || []).map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
+        ${pickerBtn(`data-lpick="oppmove"`, F.opp.kind === "move" && !(f.opp_moves || []).some((m) => m.id === F.opp.move) ? (F.opp.moveName || F.opp.move) : "", "다른 기술 찾기")}
         ${f.opp_can_mega ? `<label class="check"><input type="checkbox" id="f-oppmega" ${F.opp.mega ? "checked" : ""}> 메가진화</label>` : ""}
         <span class="sep"></span>${oppSw}<button class="opt${sel(F.opp.kind === "none")}" data-opp="none:">못 움직임</button>
         ${F.opp.kind === "switch" ? entryBoxes(((f.opp_bench || []).find((b) => b.id === F.opp.species) || {}).entry, F.opp.entry || [], "data-oppentry") : ""}</div>
+      ${isSwapMove(F.me) || isSwapMove(F.opp) ? `<div class="frow"><span class="flabel">도구 교환</span>
+        <span>상대가 준 도구</span> ${pickerBtn(`data-lpick="given"`, F.swap_given ?? f.opp_item_guess ?? "", "도구")}
+        <span class="muted">내가 준 도구: ${esc(f.my_item || "없음")} · 받은 도구로 다음 기술부터 계산합니다 (구애 계열이면 그 기술로 고정)</span></div>` : ""}
+      ${F.me.kind === "move" && F.me.move === "knockoff" ? `<div class="frow"><span class="flabel">떨어뜨린 도구</span>
+        ${pickerBtn(`data-lpick="knocked"`, F.knocked || "", "보였으면 고르기")}
+        <span class="muted">게임에 "○○을(를) 떨어뜨렸다"가 떴으면 넣으세요</span></div>` : ""}
       <div class="frow"><span class="flabel">턴 끝 HP</span>
         <label>내 HP <input id="f-myhp" class="input input-sm" type="number" min="0" value="${esc(String(F.my_hp))}"> / ${esc(String(f.my_hp_max || "?"))}</label>
         <button class="btn btn-sm" data-hp="me:0">내 기절</button>
@@ -702,10 +881,13 @@ function renderLive(v) {
         <div class="quick">
           <label>내 상태이상 <select id="f-mystatus" class="input input-sm" data-x="me_status">${STATUS_OPTS.map(([k, n]) => `<option value="${k}" ${F.extras.me_status === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
           <label>상대 상태이상 <select id="f-oppstatus" class="input input-sm" data-x="opp_status">${STATUS_OPTS.map(([k, n]) => `<option value="${k}" ${F.extras.opp_status === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
-          <label>상대 도구 발동 <input id="f-oppitem" class="input input-sm" data-x="opp_item" placeholder="기합의띠" value="${esc(F.extras.opp_item || "")}"></label>
-          <label>상대 특성 발동 <input id="f-oppability" class="input input-sm" data-x="opp_ability" placeholder="위협" value="${esc(F.extras.opp_ability || "")}"></label>
+          <span>상대 도구 (발동·사용)</span> ${pickerBtn(`data-lpick="oppitem"`, F.extras.opp_item || "", "도구")}
+          ${f.my_item_consumable ? `<label class="check"><input type="checkbox" id="f-myitemused" ${F.extras.my_item_used ? "checked" : ""}> 내 ${esc(f.my_item)} 사용</label>` : ""}
+          <span>상대 특성 발동</span> ${pickerBtn(`data-lpick="oppability"`, F.extras.opp_ability || "", "특성")}
           <label>날씨 변화 <select id="f-weather" class="input input-sm" data-x="weather">${WEATHER_OPTS.map(([k, n]) => `<option value="${k}" ${F.extras.weather === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
-        </div><p class="muted">랭크 변화(칼춤, 용성군 등 기술의 확정 효과)와 HP 0이면 기절은 자동으로 넣습니다.</p></details>
+        </div><p class="muted">랭크 변화(칼춤, 용성군 등 기술의 확정 효과)와 HP 0이면 기절은 자동으로 넣습니다.
+        먹다남은음식처럼 계속 발동하는 도구는 처음 한 번만 넣으면 기억해서 다음 턴부터 예상 HP에 회복을 넣고,
+        열매·기합의띠처럼 한 번 쓰고 사라지는 도구는 넣으면 자동으로 '사용'으로 처리합니다.</p></details>
       <div id="live-preview" class="muted"></div>
       <div class="run-row"><button class="btn btn-primary" id="live-turn" ${ready ? "" : "disabled"}>이번 턴 적용</button>
         <span class="muted">${ready ? "" : "먼저 움직인 쪽, 내 행동, 상대 행동을 골라 주세요."}</span></div>
@@ -727,6 +909,7 @@ function renderLive(v) {
       <ol class="plain small">${v.history.map((h) => `<li>${esc(h)}</li>`).join("") || "<li class='muted'>아직 없습니다.</li>"}</ol></div>`;
   bindLive(v);
 }
+const rerenderSoon = () => setTimeout(() => live.view && renderLive(live.view), 0);
 async function refreshEstimate() {
   const F = live.form;
   if (!F.me.kind || !F.opp.kind) return;
@@ -735,7 +918,12 @@ async function refreshEstimate() {
     if (!F.edited.me && e.my_hp != null) { F.my_hp = e.my_hp; if ($("#f-myhp")) $("#f-myhp").value = e.my_hp; }
     if (!F.edited.opp && e.opp_hp != null) { F.opp_hp = e.opp_hp; if ($("#f-opphp")) $("#f-opphp").value = e.opp_hp; }
     F.estimated = true;
-    if ($("#f-est")) $("#f-est").textContent = "고른 기술로 예상한 값입니다. 게임 화면과 다르면 고치세요.";
+    F.extras.my_item_used = !!e.my_item_used;
+    if (e.opp_item_used && !F.extras.opp_item) F.extras.opp_item = e.opp_item_used;
+    if ($("#f-myitemused")) $("#f-myitemused").checked = F.extras.my_item_used;
+    if (e.opp_item_used) rerenderSoon();
+    const notes = (e.notes || []).length ? ` (반영: ${e.notes.join(", ")})` : "";
+    if ($("#f-est")) $("#f-est").textContent = `고른 기술로 예상한 값입니다${notes}. 게임 화면과 다르면 고치세요.`;
   } catch (e) { /* 예상값은 편의 기능이라 실패해도 넘어간다 */ }
 }
 function bindLive(v) {
@@ -755,10 +943,37 @@ function bindLive(v) {
   document.querySelectorAll("[data-oppentry]").forEach((c) => c.addEventListener("change", () => {
     F.opp.entry = [...document.querySelectorAll("[data-oppentry]")].filter((x) => x.checked).map((x) => x.dataset.oppentry);
   }));
-  if ($("#f-oppother")) $("#f-oppother").addEventListener("change", (e) => {
-    if (e.target.value.trim()) { F.opp = { kind: "move", move: e.target.value.trim(), mega: F.opp.mega || false }; rerender(); refreshEstimate(); }
-  });
+  document.querySelectorAll("[data-lpick]").forEach((btn) => btn.addEventListener("click", async () => {
+    const kind = btn.dataset.lpick;
+    const oppMon = v.opp.find((m) => m.active) || {};
+    if (kind === "oppmove" || kind === "oppability") {
+      const sd = await speciesData(oppMon.species);
+      if (!sd) return;
+      if (kind === "oppmove") {
+        const opts = sd.moves.map((m) => ({ ...m, note: `${m.type} · ${m.category === "Status" ? "변화" : m.category === "Physical" ? "물리" : "특수"}${m.power ? " " + m.power : ""}` }));
+        openPicker(btn, withPopular(opts, (f.opp_moves || []).map((m) => m.id)), (p) => {
+          F.opp = p.id ? { kind: "move", move: p.id, moveName: p.name, mega: F.opp.mega || false } : { kind: null };
+          rerender(); refreshEstimate();
+        });
+      } else {
+        openPicker(btn, withPopular(sd.abilities, sd.popular.abilities), (p) => { F.extras.opp_ability = p.name; rerender(); });
+      }
+      return;
+    }
+    const o = await builderOptions();
+    const guess = o.items.filter((x) => x.name === f.opp_item_guess).map((x) => x.id);
+    const items = withPopular(o.items.map((x) => ({ ...x, note: x.mega ? "메가스톤" : x.berry ? "열매" : "" })), guess);
+    openPicker(btn, items, (p) => {
+      if (kind === "given") F.swap_given = p.name;
+      else if (kind === "knocked") F.knocked = p.name;
+      else if (kind === "oppitem") F.extras.opp_item = p.name;
+      rerender();
+    });
+  }));
   document.querySelectorAll("[data-x]").forEach((el) => el.addEventListener("change", () => { F.extras[el.dataset.x] = el.value.trim(); }));
+
+  if ($("#f-myitemused")) $("#f-myitemused").addEventListener("change", (e) => { F.extras.my_item_used = e.target.checked; });
+
   if ($("#f-mymega")) $("#f-mymega").addEventListener("change", (e) => { F.me.mega = e.target.checked; refreshEstimate(); });
   if ($("#f-oppmega")) $("#f-oppmega").addEventListener("change", (e) => { F.opp.mega = e.target.checked; refreshEstimate(); });
   if ($("#f-myhp")) $("#f-myhp").addEventListener("input", (e) => { F.my_hp = e.target.value; F.edited.me = true; });
@@ -770,7 +985,8 @@ function bindLive(v) {
   if ($("#live-turn")) $("#live-turn").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
     const extras = { ...F.extras };
     const form = { first: F.first, me: F.me, opp: F.opp, my_hp: F.my_hp === "" ? null : Number(F.my_hp),
-      opp_hp: F.opp_hp === "" ? null : Number(F.opp_hp), extras };
+      opp_hp: F.opp_hp === "" ? null : Number(F.opp_hp), extras,
+      swap: { given: F.swap_given ?? (v.form.opp_item_guess || "") }, knocked: F.knocked || "" };
     try { renderLive(await api("/api/live/turn", { id: live.id, form })); }
     catch (e) { $("#live-preview").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
   }));
@@ -852,7 +1068,6 @@ async function runReview(id) {
       <p class="muted">승률은 상대 세트 샘플 × 롤아웃으로 다시 계산한 추정입니다. 인게임 결과는 성능 지표가 아니라 복기용입니다.</p></div>`;
   } catch (e) { $("#review-result").innerHTML = ""; throw e; }
 }
-document.querySelector('.tabs button[data-tab="review"]').addEventListener("click", loadBattles);
 
 // ---------------- 공식 공지 ----------------
 async function loadNews() {

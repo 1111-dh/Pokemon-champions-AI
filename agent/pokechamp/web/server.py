@@ -49,6 +49,8 @@ class App:
             "/api/engine": self.engine_health,
             "/api/teams": lambda q: [{k: v for k, v in t.items() if k != "team_json"} for t in list_teams(self.conn)],
             "/api/battles": self.battles,
+            "/api/builder/options": self.builder_options,
+            "/api/builder/species": self.builder_species,
         }
         self.post_routes: dict[str, Callable[[dict], Any]] = {
             "/api/battle/new": lambda b: self.playground.new(b.get("seed") or None),
@@ -70,6 +72,8 @@ class App:
             "/api/battle/delete": self.battle_delete,
             "/api/team/delete": self.team_delete,
             "/api/team/show": self.team_show,
+            "/api/team/save_sets": self.team_save_sets,
+            "/api/team/parse_ids": self.team_parse_ids,
             "/api/live/estimate": lambda b: self._live(b).estimate(b.get("me") or {}, b.get("opp") or {}),
             "/api/live/turn": lambda b: json.loads(json.dumps(self._live(b).submit_turn(b.get("form") or {}), default=float)),
             "/api/live/replace": lambda b: json.loads(json.dumps(self._live(b).submit_replace(b.get("me"), b.get("opp"),
@@ -265,6 +269,100 @@ class App:
             raise ValueError(f"'{name}' 팀이 없다")
         return {"deleted": name}
 
+    # ---------- 팀 만들기 (선택 방식) ----------
+    NATURE_STATS = {  # 성격 → (올라가는 능력, 내려가는 능력). 무보정 성격은 없음
+        "lonely": ("atk", "def"), "brave": ("atk", "spe"), "adamant": ("atk", "spa"), "naughty": ("atk", "spd"),
+        "bold": ("def", "atk"), "relaxed": ("def", "spe"), "impish": ("def", "spa"), "lax": ("def", "spd"),
+        "timid": ("spe", "atk"), "hasty": ("spe", "def"), "jolly": ("spe", "spa"), "naive": ("spe", "spd"),
+        "modest": ("spa", "atk"), "mild": ("spa", "def"), "quiet": ("spa", "spe"), "rash": ("spa", "spd"),
+        "calm": ("spd", "atk"), "gentle": ("spd", "def"), "sassy": ("spd", "spe"), "careful": ("spd", "spa")}
+    STAT_KO = {"hp": "HP", "atk": "공격", "def": "방어", "spa": "특공", "spd": "특방", "spe": "스피드"}
+
+    def builder_options(self, q: dict) -> dict:
+        v = active_version(self.conn)
+        if v is None:
+            return {"species": [], "items": [], "natures": []}
+        species = [{"id": r["id"], "name": r["name_ko"] or r["name_en"], "name_en": r["name_en"], "sprite": sprite_id(r["name_en"]),
+                    "types": json.loads(r["types_json"])}
+                   for r in self.conn.execute("SELECT * FROM species WHERE version_id=? AND is_mega=0 ORDER BY num, form_index", (v["id"],))]
+        items = [{"id": r["id"], "name": r["name_ko"] or r["name_en"], "name_en": r["name_en"], "mega": bool(r["is_mega_stone"]),
+                  "berry": bool(r["is_berry"])}
+                 for r in self.conn.execute("SELECT * FROM items WHERE version_id=? ORDER BY name_ko", (v["id"],))]
+        natures = []
+        for r in self.conn.execute("SELECT * FROM natures WHERE version_id=? ORDER BY name_ko", (v["id"],)):
+            up, down = self.NATURE_STATS.get(r["id"], (None, None))
+            natures.append({"id": r["id"], "name": r["name_ko"] or r["name_en"], "name_en": r["name_en"],
+                            "note": f"{self.STAT_KO[up]}↑ {self.STAT_KO[down]}↓" if up else "무보정"})
+        return {"species": species, "items": items, "natures": natures}
+
+    def builder_species(self, q: dict) -> dict:
+        """그 포켓몬이 가질 수 있는 특성과 배울 수 있는 기술, 통계상 많이 쓰는 선택지 (위에 먼저 보인다)."""
+        from pokechamp.data.priors import Priors
+        v = active_version(self.conn)
+        sid = (q.get("id") or [""])[0]
+        r = self.conn.execute("SELECT * FROM species WHERE version_id=? AND id=?", (v["id"], sid)).fetchone()
+        if r is None:
+            raise ValueError(f"포켓몬 '{sid}'이(가) 없다")
+        ab_names = {x["id"]: x["name_ko"] or x["name_en"] for x in self.conn.execute(
+            "SELECT id, name_ko, name_en FROM abilities WHERE version_id=?", (v["id"],))}
+        abilities = []
+        for a in json.loads(r["abilities_json"]).values():
+            aid = re.sub(r"[^a-z0-9]", "", a.lower())
+            abilities.append({"id": aid, "name": ab_names.get(aid, a)})
+        moves = [{"id": m["id"], "name": m["name_ko"] or m["name_en"], "type": m["type"], "category": m["category"], "power": m["power"]}
+                 for m in self.conn.execute(
+                     "SELECT m.id, m.name_ko, m.name_en, m.type, m.category, m.power FROM learnsets l JOIN moves m"
+                     " ON m.version_id=l.version_id AND m.id=l.move_id WHERE l.version_id=? AND l.species_id=? ORDER BY m.name_ko",
+                     (v["id"], sid))]
+        pri = Priors(self.conn)
+        top = lambda kind, n: [k for k, p in pri.marginal(sid, kind).values[:n] if k]   # noqa: E731
+        spreads = pri.marginal(sid, "spreads").values[:3]
+        return {"id": sid, "name": r["name_ko"], "abilities": abilities, "moves": moves,
+                "popular": {"items": top("items", 8), "moves": top("moves", 12), "abilities": top("abilities", 3),
+                            "natures": top("natures", 3),
+                            "spreads": [json.loads(s) if isinstance(s, str) else s for s, _ in spreads]}}
+
+    def team_parse_ids(self, b: dict) -> dict:
+        """Showdown 텍스트 → 팀 만들기 칸 (id)."""
+        from pokechamp.battle.events import SpeciesResolver
+        sets, _ = self._parse(b)
+        res = SpeciesResolver(self.conn)
+        return {"sets": [{"species": res(p.species_id), "item": re.sub(r"[^a-z0-9]", "", (p.item or "").lower()),
+                          "ability": re.sub(r"[^a-z0-9]", "", (p.ability or "").lower()),
+                          "nature": re.sub(r"[^a-z0-9]", "", (p.nature or "").lower()), "evs": p.evs or {},
+                          "moves": [re.sub(r"[^a-z0-9]", "", m.lower()) for m in p.moves]} for p in sets]}
+
+    def team_save_sets(self, b: dict) -> dict:
+        """선택 방식으로 만든 팀 저장: 칸마다 id(species, item, ability, nature, moves)와 Stat Points(evs)."""
+        name = (b.get("name") or "").strip()
+        if not name:
+            raise ValueError("팀 이름을 넣으세요")
+        v = active_version(self.conn)
+        en = {}
+        for table in ("species", "items", "abilities", "natures", "moves"):
+            en[table] = {r[0]: r[1] for r in self.conn.execute(f"SELECT id, name_en FROM {table} WHERE version_id=?", (v["id"],))}
+        team, notes = [], []
+        for i, s in enumerate(b.get("sets") or []):
+            if not s.get("species"):
+                continue
+            st = {"species": en["species"].get(s["species"], s["species"]), "item": en["items"].get(s.get("item") or "", ""),
+                  "ability": en["abilities"].get(s.get("ability") or "", ""), "nature": en["natures"].get(s.get("nature") or "", ""),
+                  "evs": {k: int(x) for k, x in (s.get("evs") or {}).items() if str(x).strip() not in ("", "0")},
+                  "moves": [en["moves"].get(m, m) for m in (s.get("moves") or []) if m]}
+            missing = [k for k, label in (("item", "도구"), ("ability", "특성"), ("nature", "성격")) if not st[k]]
+            if len(st["moves"]) < 4:
+                missing.append("moves")
+            if missing:
+                notes.append(f"{i + 1}번 {st['species']}: 비어 있는 항목 {', '.join(missing)}")
+            team.append(st)
+        if not team:
+            raise ValueError("포켓몬을 한 마리 이상 고르세요")
+        valid, problems = validate_team(team, self.client)
+        if b.get("check_only"):
+            return {"valid": valid, "problems": problems, "notes": notes}
+        save_team(self.conn, name, team, "manual", valid, problems if valid is not None else [], replace=bool(b.get("replace")))
+        return {"name": name, "valid": valid, "problems": problems, "notes": notes}
+
     def team_show(self, b: dict) -> dict:
         from pokechamp.battle.events import SpeciesResolver
         from pokechamp.teams.store import export_text, load_team
@@ -274,8 +372,12 @@ class App:
         members = [{"species": s["species"], "name": names.ko["species"].get(res(s["species"]), s["species"]), "sprite": sprite_id(s["species"]),
                     "item": names.ko["items"].get(re.sub(r"[^a-z0-9]", "", (s.get("item") or "").lower()), s.get("item") or ""),
                     "filled": s.get("filled") or []} for s in t["team"]]
+        ids = lambda table, x: names.maps[table].get(names.norm(x or ""), (re.sub(r"[^a-z0-9]", "", (x or "").lower()), ""))[0] if x else ""   # noqa: E731
+        sets = [{"species": res(s["species"]), "item": ids("items", s.get("item")), "ability": ids("abilities", s.get("ability")),
+                 "nature": ids("natures", s.get("nature")), "evs": s.get("evs") or {},
+                 "moves": [ids("moves", m) for m in s.get("moves", [])]} for s in t["team"]]
         return {"name": t["name"], "source": t["source"], "valid": t["valid"], "problems": t["problems"],
-                "created_at": t["created_at"], "members": members, "export": export_text(t["team"])}
+                "created_at": t["created_at"], "members": members, "export": export_text(t["team"]), "sets": sets}
 
     # ---------- 복기 ----------
     def battles(self, q: dict) -> list:
