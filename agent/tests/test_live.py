@@ -266,7 +266,7 @@ def test_team_builder_api(conn):
     from pokechamp.web.server import App
     a = App()
     o = a.builder_options({})
-    assert len(o["species"]) > 200 and o["items"] and any(n["note"] == "공격↑ 방어↓" for n in o["natures"])
+    assert len(o["species"]) > 200 and o["items"] and any(n["note"] == "A↑ B↓" for n in o["natures"])
     s = a.builder_species({"id": ["garchomp"]})
     assert {"roughskin", "sandveil"} <= {x["id"] for x in s["abilities"]}
     assert "earthquake" in {m["id"] for m in s["moves"]} and s["popular"]["moves"]

@@ -21,6 +21,7 @@ from pokechamp.data.static.names import to_id
 from pokechamp.engine_client import EngineClient
 from pokechamp.matchup.fast import MatchupCache
 from pokechamp.sets.archetypes import load_archetypes, load_rules, rule_violations
+from pokechamp.stat_order import sp_text
 from pokechamp.teambuild.meta import build_meta
 from pokechamp.teambuild.pool import Pool, Threats, Unit, build_threats, species_units, unit_from_archetype
 from pokechamp.teambuild.score import Evaluator, TeamScore
@@ -50,7 +51,7 @@ class Names:
                 "moves": [self.en("moves", m) for m in st.get("moves", [])]}
 
     def line_ko(self, st: dict[str, Any]) -> str:
-        evs = " ".join(f"{k}{v}" for k, v in (st.get("evs") or {}).items() if v)
+        evs = sp_text(st.get("evs") or {})
         return (f"{self.ko('species', st['species'])} @ {self.ko('items', st.get('item', '')) or '-'} / "
                 f"{self.ko('abilities', st.get('ability', ''))} / {self.ko('natures', st.get('nature', ''))} / SP {evs} / "
                 + ", ".join(self.ko("moves", m) for m in st.get("moves", [])))
