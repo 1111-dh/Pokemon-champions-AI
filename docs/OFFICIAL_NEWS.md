@@ -3,7 +3,7 @@
 > 이 파일은 `uv run python -m pokechamp.data.official_news`가 만든다. 직접 고치지 말 것.
 > 출처와 관리 규칙은 [OFFICIAL_SOURCES.md](OFFICIAL_SOURCES.md)에 있다.
 
-- 마지막 확인: 2026-11-21 23:06 KST
+- 마지막 확인: 2026-11-22 01:37 KST
 - 언어: `ko` · 목록 hash: `3f375b4b38496aa6dfe3096063109517` · 챔피언스 공지 70개
 - 이번 확인에서 새 공지 0개, 갱신 0개
 
