@@ -20,6 +20,7 @@
     </div>
     <nav class="tabs" role="tablist" aria-label="화면">
       <button role="tab" data-tab="live" aria-selected="true">실전</button>
+      <button role="tab" data-tab="calc">계산기</button>
       <button role="tab" data-tab="team">내 팀</button>
       <button role="tab" data-tab="recommend">파티 추천</button>
       <button role="tab" data-tab="review">복기</button>
@@ -126,6 +127,15 @@
         <div id="live-select-result" class="stack"></div>
       </div>
       <div id="live-battle" class="stack"></div>
+    </section>
+
+    <section id="tab-calc" class="tab-panel" role="tabpanel" hidden>
+      <div class="calc-grid">
+        <div class="panel calc-card" id="calc-me"></div>
+        <div class="panel calc-card" id="calc-opp"></div>
+      </div>
+      <div class="panel calc-speed" id="calc-speed" aria-live="polite"></div>
+      <div class="panel" id="calc-damage"></div>
     </section>
 
     <section id="tab-review" class="tab-panel" role="tabpanel" hidden>

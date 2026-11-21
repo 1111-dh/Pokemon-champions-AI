@@ -304,7 +304,7 @@ export function buildState(req: BuildStateReq) {
 
 // ---------- /stats ----------
 // 세트의 실제 능력치(레벨 50, Stat Points). 메가면 메가 폼 기준. 믿음 상태가 파티클마다 한 번 계산해 둔다.
-export function stats(req: { set: any; mega?: boolean }) {
+export function stats(req: { set: any; mega?: boolean; status?: string }) {
   const set = { ...req.set, level: 50, moves: req.set.moves?.length ? req.set.moves : ['splash'] };
   const battle = new PS.Battle({ formatid: 'gen9championscustomgame', seed: 'sodium,00000000000000000000000000000000',
     p1: { name: 'a', team: [set] }, p2: { name: 'b', team: [set] } });
@@ -315,8 +315,17 @@ export function stats(req: { set: any; mega?: boolean }) {
     if (!battle.actions.canMegaEvo(m)) throw new Error(`${m.species.name}은(는) 지닌 도구로 메가진화할 수 없다`);
     battle.actions.runMegaEvo(m);
   }
+  // 상태이상을 반영한 스피드 (마비 절반, 속보 등). 도구·랭크는 빼고 상태이상과 특성만 본다
+  let speStatus = m.storedStats.spe;
+  if (req.status) {
+    m.setStatus(req.status);
+    const item = m.item;
+    m.item = '' as any;
+    speStatus = m.getStat('spe');
+    m.item = item;
+  }
   return { species: m.species.name, hp: m.maxhp, atk: m.storedStats.atk, def: m.storedStats.def, spa: m.storedStats.spa,
-    spd: m.storedStats.spd, spe: m.storedStats.spe, ability: m.ability, types: m.getTypes() };
+    spd: m.storedStats.spd, spe: m.storedStats.spe, speStatus, ability: m.ability, types: m.getTypes() };
 }
 
 // ---------- /bot_choice ----------
@@ -347,7 +356,7 @@ export function movesInfo(req: { moves: string[] }) {
       if (m.secondary.self?.boosts) Object.assign(self, m.secondary.self.boosts);
     }
     out[m.id] = { priority: m.priority, category: m.category, selfBoosts: self, targetBoosts: target,
-      multihit: !!m.multihit, selfdestruct: !!m.selfdestruct };
+      multihit: !!m.multihit, selfdestruct: !!m.selfdestruct, type: m.type, name: m.name };
   }
   return out;
 }

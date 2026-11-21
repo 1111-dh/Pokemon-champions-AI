@@ -19,7 +19,7 @@ export interface DamageReq {
   attacker: DamageSide;
   defender: DamageSide;
   move: string;
-  field?: { weather?: string; terrain?: string };
+  field?: { weather?: string; terrain?: string; screens?: string[] };   // screens: 맞는 쪽의 벽 (reflect, lightscreen, auroraveil)
   crossCheck?: boolean;     // @smogon/calc 교차 검증 (기본 true)
 }
 
@@ -33,6 +33,9 @@ export interface DamageResult {
   typeEffectiveness: number;   // 0이면 무효
   immune: boolean;
   status: boolean;             // 변화기 (데미지 없음)
+  hitOptions: number[];        // 타수 선택지 (연속기 [2,3,4,5], 부자유친이면 [2], 단타 [1])
+  perHit: { rolls: number[]; critRolls: number[] }[];   // 타마다 난수 16단계 (트리플악셀처럼 타마다 위력이 다를 수 있다)
+  attackerAbility: string;     // 메가 후 실제 특성 (스킬링크 등)
   calc?: { rolls: number[]; critRolls: number[]; mismatch: boolean; error?: string };
 }
 
@@ -44,16 +47,20 @@ function battleFor(attacker: DamageSide, defender: DamageSide, field?: DamageReq
   battle.choose('p2', 'team 1');
   const a = battle.p1.active[0];
   const d = battle.p2.active[0];
-  // 등장 시 발동한 효과(날씨 특성, 위협 등)를 지우고 요청한 상태만 적용한다
-  battle.field.clearWeather();
-  battle.field.clearTerrain();
-  for (const mon of [a, d]) mon.clearBoosts();
-  for (const [side, mon] of [[attacker, a], [defender, d]] as [DamageSide, any][]) {
+  const sides = [[attacker, a], [defender, d]] as [DamageSide, any][];
+  for (const [side, mon] of sides) {
     if (side.mega) {
       const forme = battle.actions.canMegaEvo(mon);
       if (!forme) throw new Error(`${mon.species.name}은(는) 지닌 도구로 메가진화할 수 없다`);
       battle.actions.runMegaEvo(mon);
     }
+  }
+  // 등장·메가진화 때 발동한 효과(가뭄 같은 날씨 특성, 위협 등)를 지우고 요청한 상태만 적용한다.
+  // 메가진화가 먼저다: 메가리자몽Y의 가뭄은 메가진화할 때 쾌청을 깐다
+  battle.field.clearWeather();
+  battle.field.clearTerrain();
+  for (const mon of [a, d]) mon.clearBoosts();
+  for (const [side, mon] of sides) {
     if (side.boosts) mon.setBoost(side.boosts);
     if (side.status) mon.setStatus(side.status);
     if (side.hpPercent !== undefined) mon.sethp(Math.max(1, Math.floor((mon.maxhp * side.hpPercent) / 100)));
@@ -61,16 +68,18 @@ function battleFor(attacker: DamageSide, defender: DamageSide, field?: DamageReq
   // 날씨·필드는 공격자가 깐 것으로 둔다 (Showdown은 원인 없는 날씨 설정을 막는다)
   if (field?.weather) battle.field.setWeather(field.weather, a, battle.dex.conditions.get(field.weather));
   if (field?.terrain) battle.field.setTerrain(field.terrain, a, battle.dex.conditions.get(field.terrain));
+  for (const s of field?.screens ?? []) battle.p2.addSideCondition(s, d);
   return { battle, a, d };
 }
 
-function engineRolls(req: DamageReq, crit: boolean) {
+function engineRolls(req: DamageReq, crit: boolean, hit = 1) {
   const rolls: number[] = [];
   let ctx: any;
   let typeMod = 0;
   let immune = false;
   let status = false;
   let alwaysCrit = false;
+  let multihit: number | number[] | undefined;
   for (let r = 15; r >= 0; r--) {
     ctx = battleFor(req.attacker, req.defender, req.field);
     const { battle, a, d } = ctx;
@@ -80,20 +89,24 @@ function engineRolls(req: DamageReq, crit: boolean) {
     if (!move.exists) throw new Error(`없는 기술: ${req.move}`);
     alwaysCrit = move.willCrit === true;          // 꽃트릭처럼 항상 급소인 기술은 그대로 둔다
     if (!alwaysCrit) move.willCrit = crit;
-    move.hit = 1;                                  // 연속기는 첫 타 데미지
+    move.hit = hit;                                // 몇 번째 타인지 (트리플악셀 위력, 부자유친 2타 보정)
     battle.setActiveMove(move, a, d);
     // 실제 기술 사용(useMove)과 같이 기술을 바꾸는 효과를 먼저 적용한다 (우격다짐, 스킨 특성 등)
     battle.singleEvent('ModifyType', move, null, a, d, move, move);
     battle.singleEvent('ModifyMove', move, null, a, d, move, move);
     move = battle.runEvent('ModifyType', a, d, move, move);
     move = battle.runEvent('ModifyMove', a, d, move, move);
+    // 실제 배틀처럼 기술 준비 단계(부자유친의 2타, 변환자재의 타입 변경)와 명중 직전 판정(축전·저수 같은 흡수 특성)을 거친다
+    battle.runEvent('PrepareHit', a, d, move);
+    multihit = move.multihit;
     status = move.category === 'Status';
-    immune = !status && !d.runImmunity(move, false);
+    immune = !status && (!d.runImmunity(move, false) || [null, false].includes(battle.runEvent('TryHit', d, a, move)));
     const dmg = status || immune ? 0 : battle.actions.getDamage(a, d, move, true);
     rolls.push(typeof dmg === 'number' ? dmg : 0);
     typeMod = d.runEffectiveness(move);
   }
-  return { rolls, ...ctx, typeMod, immune, status, alwaysCrit } as { rolls: number[]; battle: any; a: any; d: any; typeMod: number; immune: boolean; status: boolean; alwaysCrit: boolean };
+  return { rolls, ...ctx, typeMod, immune, status, alwaysCrit, multihit } as { rolls: number[]; battle: any; a: any; d: any; typeMod: number;
+    immune: boolean; status: boolean; alwaysCrit: boolean; multihit?: number | number[] };
 }
 
 function calcRolls(req: DamageReq, crit: boolean): number[] {
@@ -124,6 +137,12 @@ export function damage(req: DamageReq): DamageResult {
   const normal = engineRolls(req, false);
   const crit = engineRolls(req, true);
   const { a, d } = normal;
+  const mh = normal.multihit;
+  const hitOptions = Array.isArray(mh) ? Array.from({ length: mh[1] - mh[0] + 1 }, (_, i) => mh[0] + i) : [typeof mh === 'number' ? mh : 1];
+  const perHit = [{ rolls: normal.rolls, critRolls: crit.rolls }];
+  for (let h = 2; h <= hitOptions[hitOptions.length - 1]; h++) {
+    perHit.push({ rolls: engineRolls(req, false, h).rolls, critRolls: engineRolls(req, true, h).rolls });
+  }
   const statsOf = (m: any) => ({ hp: m.maxhp, atk: m.storedStats.atk, def: m.storedStats.def,
     spa: m.storedStats.spa, spd: m.storedStats.spd, spe: m.storedStats.spe });
   const res: DamageResult = {
@@ -137,6 +156,9 @@ export function damage(req: DamageReq): DamageResult {
     typeEffectiveness: normal.immune ? 0 : 2 ** normal.typeMod,
     immune: normal.immune,
     status: normal.status,
+    hitOptions,
+    perHit,
+    attackerAbility: a.ability,
   };
   if (req.crossCheck !== false && !normal.status) {
     try {
