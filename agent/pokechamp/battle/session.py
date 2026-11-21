@@ -175,7 +175,13 @@ class BattleSession:
             return
         om = st.opp.mons.get(sp)
         if e.kind == "item":
-            self.belief.observe_item(sp, e.item, note=e.note, consumed=e.value == "consumed", mega=bool(om and om.mega))
+            if e.value == "received":            # 트릭 등으로 받은 도구는 원래 도구의 증거가 아니다 (이후 도구 증거도 끈다)
+                self.belief.mon(sp).item_swapped = True
+                return
+            if e.value == "lost" and (not e.item or (om and om.held is not None)):
+                return                           # 떨어뜨린 도구를 모르거나, 이미 바뀐 도구였다
+            self.belief.observe_item(sp, e.item, note="" if e.value == "lost" else e.note,
+                                     consumed=e.value in ("consumed", "lost"), mega=bool(om and om.mega))
             self.evidence["item"] += 1
         elif e.kind == "ability":
             if om and om.transformed:            # 변신은 상대의 특성을 복사한다

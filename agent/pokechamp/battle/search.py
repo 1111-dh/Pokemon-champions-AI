@@ -97,13 +97,19 @@ class Searcher:
         else:
             p["hpPct"] = m.hp
         p["status"] = m.status
+        cur_item = m.held if m.held is not None else m.item
         if active:
             p["boosts"] = {k: v for k, v in m.boosts.items() if v}
-            if m.item in CHOICE_ITEMS and m.last_move and not m.mega:
+            if cur_item in CHOICE_ITEMS and m.last_move and not m.mega and not m.item_consumed:
                 p["choiceLock"] = m.last_move
         if m.mega:
             p["mega"] = True
-        if m.item_consumed:
+        if m.held is not None:                      # 트릭 등으로 도구가 바뀌었다
+            if m.held:
+                p["item"] = m.held
+            else:
+                p["itemConsumed"] = True
+        elif m.item_consumed:
             p["itemConsumed"] = True
         return p
 
