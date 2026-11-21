@@ -34,7 +34,14 @@ ENTRY_ABILITIES = {"intimidate"} | set(WEATHER_SETTERS) | set(TERRAIN_SETTERS)
 ANNOUNCE_ABILITIES = ENTRY_ABILITIES | {"pressure", "unnerve", "moldbreaker", "teravolt", "turboblaze", "frisk", "trace",
                                         "download", "anticipation", "forewarn", "airlock", "cloudnine", "comatose",
                                         "neutralizinggas", "screencleaner", "curiousmedicine", "asonespectrier", "asoneglastrier"}
-ENTRY_ITEMS = {"airballoon"}   # 등장할 때 알림이 뜨는 도구 (풍선: 맞으면 터진다)
+ENTRY_ITEMS = {"airballoon"}
+# 한 번 쓰고 사라지는 도구 (열매는 DB의 is_berry로 판단하고, 그 밖의 것은 여기 둔다)
+CONSUMABLE_EXTRA = {"focussash", "whiteherb", "mentalherb", "powerherb", "weaknesspolicy", "redcard", "ejectbutton", "ejectpack",
+                    "throatspray", "roomservice", "blunderpolicy", "airballoon", "adrenalineorb", "absorbbulb", "cellbattery",
+                    "luminousmoss", "snowball", "electricseed", "grassyseed", "psychicseed", "mistyseed", "boosterenergy",
+                    "mirrorherb", "normalgem"}
+SAND_IMMUNE_TYPES = {"Rock", "Ground", "Steel"}
+SAND_IMMUNE_ABILITIES = {"sandveil", "sandrush", "sandforce", "overcoat", "magicguard"}   # 등장할 때 알림이 뜨는 도구 (풍선: 맞으면 터진다)
 INTIMIDATE_IMMUNE = {"clearbody", "hypercutter", "innerfocus", "oblivious", "owntempo", "scrappy", "whitesmoke", "fullmetalbody"}
 
 
@@ -326,6 +333,9 @@ class LiveBattle:
             out["my_can_mega"] = bool(self.sess.mega_of(me.set or {})) and not st.me.mega_used
             out["my_hp_max"] = me.hp_max or (self.sess.my_stats.get((me.species, me.mega)) or {}).get("hp")
             out["my_hp"] = me.hp_abs if me.hp_abs is not None else out["my_hp_max"]
+            cur = me.held if me.held is not None else ("" if me.item_consumed else to_id((me.set or {}).get("item") or ""))
+            out["my_item"] = self.ko("items", cur) if cur else ""
+            out["my_item_consumable"] = bool(cur) and self.is_consumable(cur)
         out["my_bench"] = [{"id": self.sess.res(x), "name": self.ko("species", self.sess.res(x)), "sprite": sprite_id(self.en(self.sess.res(x)))}
                            for x in self.brought if self.sess.res(x) != st.me.active and not st.me.mons[self.sess.res(x)].fainted]
         if op:
@@ -340,6 +350,14 @@ class LiveBattle:
             out["opp_all_moves"] = sorted({self.ko("moves", m) for m in weight} | {self.ko("moves", m) for m in op.moves})
             out["opp_can_mega"] = not st.opp.mega_used and self.sess.belief.summary(op.species)["mega_stone"] > 0.01 and not op.mega
             out["opp_hp"] = op.hp
+            if op.held is not None:
+                out["opp_item_guess"] = self.ko("items", op.held) if op.held else ""
+            elif op.item:
+                out["opp_item_guess"] = self.ko("items", op.item)
+            else:
+                top = mb.marginal("item")
+                out["opp_item_guess"] = self.ko("items", to_id(top[0][0] or "")) if top and top[0][0] else ""
+            out["items_all"] = sorted(set(self.bt.ko["items"].values()))
         seen = [x for x in st.opp.order if st.opp.mons[x].seen]
         cands = [x for x in seen if x != st.opp.active and not st.opp.mons[x].fainted]
         if len(seen) < 3:
@@ -376,9 +394,7 @@ class LiveBattle:
                 reqs.append({"attacker": {k: v for k, v in theirs.items() if k != "hpPercent"}, "defender": mine_side,
                              "move": opp["move"], "field": field, "crossCheck": False})
                 kinds.append(("me", p.w))
-        if not reqs:
-            return out
-        res = self.client.batch("/damage", reqs)
+        res = self.client.batch("/damage", reqs) if reqs else []
         acc = {"opp": [0.0, 0.0], "me": [0.0, 0.0]}
         for (who, w), r in zip(kinds, res):
             if not r.get("ok") or r["result"]["status"]:
@@ -388,14 +404,98 @@ class LiveBattle:
             val = 100 * mean / r["result"]["defender"]["maxhp"] if who == "opp" else mean
             acc[who][0] += w * val
             acc[who][1] += w
-        if acc["opp"][1] > 0 and op.hp is not None:
-            out["opp_hp"] = max(0, round(op.hp - acc["opp"][0] / acc["opp"][1]))
+        notes: list[str] = []
         cur = me.hp_abs if me.hp_abs is not None else (me.hp_max or (self.sess.my_stats.get((me.species, me.mega)) or {}).get("hp"))
-        if out["my_hp"] is None:
-            out["my_hp"] = cur
-        if acc["me"][1] > 0 and cur is not None:
-            out["my_hp"] = max(0, round(cur - acc["me"][0] / acc["me"][1]))
+        my_attacked = my.get("kind") == "move" and acc["opp"][1] > 0
+        opp_attacked = opp.get("kind") == "move" and acc["me"][1] > 0
+        if op.hp is not None:
+            hp = op.hp - (acc["opp"][0] / acc["opp"][1] if acc["opp"][1] > 0 else 0)
+            # 기합의띠: 가득 찬 HP에서 쓰러질 데미지면 1로 버틴다 (상대 도구가 띠로 드러났을 때만)
+            if hp <= 0 and op.hp >= 100 and self.current_item("opp") == "focussash":
+                hp, out["opp_item_used"] = 1, "기합의띠"
+                notes.append("상대 기합의띠로 버팀")
+            hp, used = self._end_of_turn("opp", max(0.0, hp), 100.0, opp_attacked, notes)
+            if used:
+                out["opp_item_used"] = self.ko("items", self.current_item("opp"))
+            out["opp_hp"] = max(0, round(hp))
+        mx = me.hp_max or (self.sess.my_stats.get((me.species, me.mega)) or {}).get("hp")
+        if cur is not None and mx:
+            hp = cur - (acc["me"][0] / acc["me"][1] if acc["me"][1] > 0 else 0)
+            if hp <= 0 and cur >= mx and self.current_item("me") == "focussash":
+                hp, out["my_item_used"] = 1, True
+                notes.append("내 기합의띠로 버팀")
+            hp, used = self._end_of_turn("me", max(0.0, hp), float(mx), my_attacked, notes)
+            out["my_item_used"] = bool(out.get("my_item_used") or used)
+            out["my_hp"] = max(0, round(hp))
+        out["notes"] = notes
         return out
+
+    # ---------- 도구 ----------
+    def is_consumable(self, item: str) -> bool:
+        berries = getattr(self, "_berries", None)
+        if berries is None:
+            v = active_version(self.conn)
+            berries = self._berries = {r[0] for r in self.conn.execute(
+                "SELECT id FROM items WHERE version_id=? AND is_berry=1", (v["id"],))}
+        return item in berries or item in CONSUMABLE_EXTRA
+
+    def current_item(self, side: str) -> str:
+        """지금 드는 도구 (내 쪽은 세트로, 상대 쪽은 드러난 것만). 썼거나 잃었으면 ""."""
+        st = self.sess.state
+        sd = st.me if side == "me" else st.opp
+        m = sd.mons.get(sd.active or "")
+        if not m:
+            return ""
+        if m.held is not None:
+            return m.held
+        if m.item_consumed:
+            return ""
+        return to_id((m.set or {}).get("item") or "") if side == "me" else (m.item or "")
+
+    def _types(self, species: str) -> list[str]:
+        cache = getattr(self, "_type_cache", None)
+        if cache is None:
+            v = active_version(self.conn)
+            cache = self._type_cache = {r[0]: json.loads(r[1] or "[]") for r in self.conn.execute(
+                "SELECT id, types_json FROM species WHERE version_id=?", (v["id"],))}
+        return cache.get(species, [])
+
+    def _end_of_turn(self, side: str, hp: float, mx: float, attacked: bool, notes: list[str]) -> tuple[float, bool]:
+        """턴 끝 효과를 예상 HP에 넣는다 (hp·mx는 같은 단위: 내 쪽은 실수치, 상대는 %·100).
+        → (HP, 일회용 도구를 썼는지). 생명의구슬은 공격했을 때만."""
+        st = self.sess.state
+        sd = st.me if side == "me" else st.opp
+        m = sd.mons.get(sd.active or "")
+        if not m or hp <= 0:
+            return hp, False
+        item = self.current_item(side)
+        ab = to_id(((m.set or {}).get("ability") if side == "me" else m.ability) or "")
+        frac = lambda f: mx * f   # noqa: E731
+        label = "내" if side == "me" else "상대"
+        used = False
+        if item == "lifeorb" and attacked and ab != "magicguard":
+            hp -= frac(0.1)
+            notes.append(f"{label} 생명의구슬 반동")
+        if hp > 0 and st.weather.kind == "sand" and ab not in SAND_IMMUNE_ABILITIES and not (set(self._types(m.species)) & SAND_IMMUNE_TYPES):
+            hp -= frac(1 / 16)
+            notes.append(f"{label} 모래바람")
+        if hp > 0 and st.terrain.kind == "grassy" and "Flying" not in self._types(m.species) and ab != "levitate" and item != "airballoon":
+            hp = min(mx, hp + frac(1 / 16))
+            notes.append(f"{label} 그래스필드 회복")
+        if hp > 0 and (item == "leftovers" or (item == "blacksludge" and "Poison" in self._types(m.species))):
+            hp = min(mx, hp + frac(1 / 16))
+            notes.append(f"{label} {self.ko('items', item)} 회복")
+        if hp > 0 and m.status == "brn" and ab != "magicguard":
+            hp -= frac(1 / 16)
+            notes.append(f"{label} 화상")
+        if hp > 0 and m.status in ("psn", "tox") and ab not in ("magicguard", "poisonheal"):
+            hp -= frac(1 / 8 if m.status == "psn" else 1 / 16)
+            notes.append(f"{label} 독")
+        if hp > 0 and item == "sitrusberry" and hp <= mx / 2:
+            hp = min(mx, hp + frac(0.25))
+            used = True
+            notes.append(f"{label} 자뭉열매 사용")
+        return hp, used
 
     def _move_id(self, x: str) -> str:
         """폼이 보낸 기술: id면 그대로, 한국어·영어 이름이면 찾아 바꾼다."""
@@ -440,6 +540,23 @@ class LiveBattle:
         for side, a in (("me", me_act), ("opp", op_act)):
             if a.get("kind") == "move" and a.get("mega"):
                 ev.append(Event("mega", side))
+        # 트릭·바꿔치기: 상대가 준 도구는 상대의 원래 도구라는 증거 (기술보다 먼저 둔다)
+        swap_moves = {"trick", "switcheroo"}
+        for a in (me_act, op_act):
+            if a.get("kind") == "move" and a.get("move") and a["move"] not in self.sess.moves:
+                a["move"] = self._move_id(a["move"])
+        swap = None
+        if any(a.get("kind") == "move" and a.get("move") in swap_moves for a in (me_act, op_act)):
+            given = (f.get("swap") or {}).get("given") or ""
+            given_id = self.bt.lookup("items", given) if given else None
+            if given and not given_id:
+                raise ValueError(f"도구 '{given}'을(를) 모른다{self.bt.suggest('items', given)}")
+            mm = st.me.mons.get(st.me.active or "")
+            om = st.opp.mons.get(st.opp.active or "")
+            mine_now = (mm.held if mm.held is not None else ("" if mm.item_consumed else to_id((mm.set or {}).get("item") or ""))) if mm else ""
+            if given_id and om and om.held is None and not om.item:
+                ev.append(Event("item", "opp", item=given_id))
+            swap = (given_id or "", mine_now)
         # 3) 기술: 먼저 움직인 쪽부터, 맞은 쪽 HP를 바로 뒤에 둔다 (데미지 증거)
         my_hp = f.get("my_hp")
         opp_hp = f.get("opp_hp")
@@ -463,6 +580,23 @@ class LiveBattle:
                 if hit and info.get("category") in ("Physical", "Special") and self._has_balloon(other):
                     ev.append(Event("item", other, item="airballoon", value="consumed"))
             ev += self._auto_effects(side, a["move"], hit)
+            if a["move"] in swap_moves and swap is not None:
+                given_id, mine_now = swap
+                ev.append(Event("item", "me", item=given_id, value="received", note="[from] move: Trick"))
+                ev.append(Event("item", "opp", item=mine_now, value="received", note="[from] move: Trick"))
+                swap = None
+            if a["move"] == "knockoff" and hit:
+                if side == "me":
+                    kn = (f.get("knocked") or "").strip()
+                    kid = self.bt.lookup("items", kn) if kn else ""
+                    if kn and not kid:
+                        raise ValueError(f"도구 '{kn}'을(를) 모른다{self.bt.suggest('items', kn)}")
+                    ev.append(Event("item", "opp", item=kid or "", value="lost", note="[from] move: Knock Off"))
+                else:
+                    mm = st.me.mons.get(st.me.active or "")
+                    cur = (mm.held if mm.held is not None else ("" if mm.item_consumed else to_id((mm.set or {}).get("item") or ""))) if mm else ""
+                    if cur and not (mm.mega or (self.sess.mega_of(mm.set or {}) and cur == to_id((mm.set or {}).get("item") or ""))):
+                        ev.append(Event("item", "me", item=cur, value="lost", note="[from] move: Knock Off"))
         # 4) 남은 HP (기술을 안 맞았어도 반동·회복 등으로 바뀐 값)
         for side, val in (("me", my_hp), ("opp", opp_hp)):
             if not hp_done[side] and val is not None and val != "":
@@ -481,7 +615,12 @@ class LiveBattle:
             it = self.bt.lookup("items", x["opp_item"])
             if not it:
                 raise ValueError(f"도구 '{x['opp_item']}'을(를) 모른다{self.bt.suggest('items', x['opp_item'])}")
-            ev.append(Event("item", "opp", item=it))
+            # 먹다남은음식처럼 계속 드는 도구는 한 번 넣으면 기억하고, 열매·띠처럼 쓰고 사라지는 도구는 '사용'으로 처리한다
+            ev.append(Event("item", "opp", item=it, value="consumed" if self.is_consumable(it) else ""))
+        if x.get("my_item_used"):
+            mine = self.current_item("me")
+            if mine:
+                ev.append(Event("item", "me", item=mine, value="consumed"))
         if x.get("opp_ability"):
             ab = self.bt.lookup("abilities", x["opp_ability"])
             if not ab:
@@ -497,7 +636,10 @@ class LiveBattle:
         st = self.sess.state
         sd = st.me if side == "me" else st.opp
         m = sd.mons.get(sd.active or "")
-        return bool(m and m.item == "airballoon" and not m.item_consumed)
+        if not m or m.item_consumed:
+            return False
+        cur = m.held if m.held is not None else (m.item or (to_id((m.set or {}).get("item") or "") if side == "me" else ""))
+        return cur == "airballoon"
 
     def _hp_event(self, side: str, val) -> Event:
         v = float(val)
@@ -558,7 +700,10 @@ class LiveBattle:
                "hp": m.hp, "hp_abs": m.hp_abs, "hp_max": m.hp_max, "status": STATUS_KO.get(m.status, m.status),
                "fainted": m.fainted, "active": m.species == active, "mega": m.mega, "seen": m.seen,
                "boosts": {STAT_KO.get(k, k): v for k, v in m.boosts.items() if v},
-               "item": self.ko("items", m.item), "item_consumed": m.item_consumed, "ability": self.ko("abilities", m.ability)}
+               "item": self.ko("items", m.held if m.held is not None else m.item) + (" (교환으로 받음)" if m.held else ""),
+               "item_consumed": m.item_consumed or m.held == "", "ability": self.ko("abilities", m.ability)}
+        if mine and m.held is not None:
+            out["moves_note"] = f"지금 도구: {self.ko('items', m.held) if m.held else '없음'}"
         if mine:
             out["moves"] = [self.ko("moves", to_id(x)) for x in (m.set or {}).get("moves", [])]
         else:

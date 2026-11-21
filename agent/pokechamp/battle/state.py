@@ -42,10 +42,11 @@ class Mon:
     seen: bool = False                # 배틀에 나왔다
     transformed: bool = False         # 변신 중 (상대의 기술을 쓴다)
     last_move: str = ""               # 출전 중 마지막으로 쓴 기술 (구애 고정 판단)
+    held: str | None = None           # 트릭·바꿔치기·도둑질 등으로 바뀐 지금 도구 (None = 원래 도구 그대로, "" = 없음)
 
     def summary(self) -> dict[str, Any]:
         return {"species": self.species, "hp": self.hp, "hp_abs": self.hp_abs, "status": self.status, "fainted": self.fainted,
-                "boosts": {k: v for k, v in self.boosts.items() if v}, "moves": list(self.moves), "item": self.item,
+                "boosts": {k: v for k, v in self.boosts.items() if v}, "moves": list(self.moves), "item": self.item, "held": self.held,
                 "item_consumed": self.item_consumed, "ability": self.ability, "mega": self.mega}
 
 
@@ -222,12 +223,24 @@ class BattleState:
             elif e.kind == "clearboost":
                 m.boosts = {k: (0 if (e.value == "all" or v < 0) else v) for k, v in m.boosts.items()}
             elif e.kind == "item":
+                if e.value == "received":                                 # 트릭·바꿔치기로 받은 도구: 지금 드는 도구가 바뀐다
+                    m.held, m.item_consumed = e.item, False
+                    m.last_move = ""                                       # 구애 고정은 받은 뒤 처음 쓰는 기술부터
+                    continue
+                if e.value == "lost":                                      # 탁쳐서떨구기 등으로 잃음
+                    if e.item and not m.item:
+                        m.item = e.item
+                    m.held = ""
+                    continue
                 swapped = "move:" in e.note or "ability:" in e.note       # 트릭·바꿔치기·매지션 등으로 실제로 바뀜
-                if sd is self.me and m.item and e.item != m.item and not m.mega and not swapped:
+                if sd is self.me and m.item and e.item != m.item and not m.mega and not swapped and m.held is None:
                     warns.append(f"내 {sp}의 도구는 {m.item}인데 {e.item}이(가) 입력됐다")
-                m.item = e.item
+                if m.held is None:
+                    m.item = e.item
                 if e.value == "consumed":
                     m.item_consumed = True
+                    if m.held is not None:
+                        m.held = ""
             elif e.kind == "ability":
                 m.ability = e.ability
                 w = WEATHER_ABILITY.get(e.ability)

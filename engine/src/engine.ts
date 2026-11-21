@@ -218,6 +218,7 @@ export interface MonPatch {
   mega?: boolean;         // 이미 메가진화했다
   itemConsumed?: boolean; // 도구를 썼다(열매·기합의띠 등)
   choiceLock?: string;    // 구애 계열로 고정된 기술 id (출전 중일 때)
+  item?: string;          // 트릭·바꿔치기 등으로 바뀐 지금 도구
 }
 export interface BuildStateReq {
   p1: TeamInput; p2: TeamInput; seed: string;
@@ -244,6 +245,11 @@ export function buildState(req: BuildStateReq) {
       const m = patches[i];
       if (!m) return;
       if (m.mega && p.canMegaEvo) battle.actions.runMegaEvo(p);
+      if (m.item !== undefined && !m.itemConsumed) {
+        p.item = PS.toID(m.item);
+        p.itemState = battle.initEffectState({ id: p.item, target: p });
+        if (!m.mega) p.canMegaEvo = battle.actions.canMegaEvo(p);   // 메가스톤을 잃었거나 받았을 수 있다
+      }
       if (m.itemConsumed) {
         p.lastItem = p.item;
         p.item = '';

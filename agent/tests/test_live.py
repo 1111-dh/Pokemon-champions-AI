@@ -190,3 +190,72 @@ def test_entry_options_follow_species_and_balloon_rules(conn):
     lb.sess.feed([Event("item", "opp", species="tyranitar", item="leftovers")])
     assert "item:airballoon" not in keys("tyranitar")                  # 도구가 이미 다른 것으로 드러남
     lb.end("aborted", save=False)
+
+
+def test_trick_swaps_items_and_knock_off(conn):
+    from pokechamp.battle.live import LiveBattle
+    from pokechamp.battle.search import SearchConfig
+    from pokechamp.engine_client import EngineClient
+    team = [{"species": "Garchomp", "item": "Life Orb", "ability": "Rough Skin", "nature": "Jolly", "evs": {"atk": 32, "spe": 32},
+             "moves": ["Earthquake", "Dragon Claw", "Rock Slide", "Fire Fang"]},
+            {"species": "Primarina", "item": "Sitrus Berry", "ability": "Torrent", "nature": "Modest", "evs": {"hp": 32, "spa": 32},
+             "moves": ["Moonblast", "Surf", "Ice Beam", "Aqua Jet"]},
+            {"species": "Incineroar", "item": "Leftovers", "ability": "Blaze", "nature": "Careful", "evs": {"hp": 32, "spd": 32},
+             "moves": ["Flare Blitz", "Knock Off", "Fake Out", "Parting Shot"]}]
+    lb = LiveBattle(conn, EngineClient(), team, ["gholdengo", "tyranitar", "lucario", "garchomp", "primarina", "dragonite"],
+                    cfg=SearchConfig(seed="t", samples=2, model_reps=2))
+    v = lb.start([1, 2, 3], "타부자고", [])
+    assert v["form"]["items_all"] and v["form"]["my_item"] == "생명의구슬"
+    # 상대가 먼저 트릭: 상대가 구애스카프를 주고 내 생명의구슬을 가져갔다
+    v = lb.submit_turn({"first": "opp", "me": {"kind": "move", "move": "earthquake"}, "opp": {"kind": "move", "move": "트릭"},
+                        "my_hp": v["form"]["my_hp"], "opp_hp": 40, "swap": {"given": "구애스카프"}})
+    st = lb.sess.state
+    assert st.me.mons["garchomp"].held == "choicescarf" and st.opp.mons["gholdengo"].held == "lifeorb"
+    assert lb.sess.belief.mon("gholdengo").item == "choicescarf"         # 상대의 원래 도구는 구애스카프였다는 증거
+    assert "교환" in next(m for m in v["mine"] if m["active"])["item"]
+    # 다음 턴에 지진을 쓰면 그 기술로 고정된다 → 그다음 추천에서 기술은 지진뿐
+    v = lb.submit_turn({"first": "me", "me": {"kind": "move", "move": "earthquake"}, "opp": {"kind": "move", "move": "shadowball"},
+                        "my_hp": 60, "opp_hp": 10})
+    moves = {o["action"]["move"] for o in v["recommendation"]["options"] if o["action"]["kind"] == "move"}
+    assert moves == {"earthquake"}
+    lb.end("aborted", save=False)
+    # 내 탁쳐서떨구기: 떨어뜨린 도구가 상대의 원래 도구 증거가 된다
+    lb2 = LiveBattle(conn, EngineClient(), team, ["gholdengo", "tyranitar", "lucario", "garchomp", "primarina", "dragonite"],
+                     cfg=SearchConfig(seed="t", samples=2, model_reps=2))
+    v = lb2.start([3, 1, 2], "마기라스", [])
+    lb2.submit_turn({"first": "opp", "me": {"kind": "move", "move": "knockoff"}, "opp": {"kind": "move", "move": "stoneedge"},
+                     "my_hp": 100, "opp_hp": 70, "knocked": "먹다남은음식"})
+    m = lb2.sess.state.opp.mons["tyranitar"]
+    assert m.held == "" and m.item == "leftovers" and lb2.sess.belief.mon("tyranitar").item == "leftovers"
+    lb2.end("aborted", save=False)
+
+
+def test_persistent_and_consumable_items_in_estimates(conn):
+    from pokechamp.battle.live import LiveBattle
+    from pokechamp.battle.search import SearchConfig
+    from pokechamp.engine_client import EngineClient
+    team = [{"species": "Primarina", "item": "Sitrus Berry", "ability": "Torrent", "nature": "Modest", "evs": {"hp": 32, "spa": 32},
+             "moves": ["Moonblast", "Surf", "Ice Beam", "Aqua Jet"]},
+            {"species": "Garchomp", "item": "Life Orb", "ability": "Rough Skin", "nature": "Jolly", "evs": {"atk": 32, "spe": 32},
+             "moves": ["Earthquake", "Dragon Claw", "Rock Slide", "Fire Fang"]},
+            {"species": "Incineroar", "item": "Leftovers", "ability": "Blaze", "nature": "Careful", "evs": {"hp": 32, "spd": 32},
+             "moves": ["Flare Blitz", "Knock Off", "Fake Out", "Parting Shot"]}]
+    lb = LiveBattle(conn, EngineClient(), team, ["gholdengo", "tyranitar", "lucario", "garchomp", "primarina", "dragonite"],
+                    cfg=SearchConfig(seed="t", samples=2, model_reps=2))
+    v = lb.start([1, 2, 3], "타부자고", [])
+    assert v["form"]["my_item_consumable"] and lb.is_consumable("sitrusberry") and not lb.is_consumable("leftovers")
+    # 상대 먹다남은음식: 한 번 넣으면 기억하고 다음 턴 예상에 회복이 들어간다
+    lb.submit_turn({"first": "opp", "me": {"kind": "move", "move": "surf"}, "opp": {"kind": "move", "move": "shadowball"},
+                    "my_hp": 120, "opp_hp": 60, "extras": {"opp_item": "먹다남은음식"}})
+    assert lb.sess.state.opp.mons["gholdengo"].item == "leftovers" and not lb.sess.state.opp.mons["gholdengo"].item_consumed
+    e = lb.estimate({"kind": "move", "move": "moonblast"}, {"kind": "move", "move": "makeitrain"})
+    assert any("먹다남은음식" in n for n in e["notes"])
+    # 자뭉열매: HP가 절반 아래로 내려가면 발동해 '사용'으로 처리
+    if e.get("my_item_used"):
+        lb.submit_turn({"first": "opp", "me": {"kind": "move", "move": "surf"}, "opp": {"kind": "move", "move": "makeitrain"},
+                        "my_hp": e["my_hp"], "opp_hp": e["opp_hp"], "extras": {"my_item_used": True}})
+        assert lb.sess.state.me.mons["primarina"].item_consumed
+    # 상대 열매는 넣으면 자동으로 '사용' 처리
+    lb.submit_turn({"first": "opp", "me": {"kind": "move", "move": "surf"}, "opp": {"kind": "move", "move": "shadowball"},
+                    "my_hp": 40, "opp_hp": 30, "extras": {"opp_item": "자뭉열매"}}) if not lb.sess.state.opp.mons["gholdengo"].fainted else None
+    lb.end("aborted", save=False)
