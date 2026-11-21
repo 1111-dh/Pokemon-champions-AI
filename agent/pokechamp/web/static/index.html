@@ -15,30 +15,34 @@
       <span class="brand-mark" aria-hidden="true"></span>
       <div>
         <h1>포챔 보조 AI</h1>
-        <p class="brand-sub">싱글배틀 3v3 개발 콘솔</p>
+        <p class="brand-sub">싱글배틀 3v3</p>
       </div>
     </div>
-    <div class="topbar-meta">
-      <span id="engine-pill" class="pill">엔진 확인 중</span>
-      <span id="branch-pill" class="pill pill-quiet"></span>
-    </div>
+    <nav class="tabs" role="tablist" aria-label="화면">
+      <button role="tab" data-tab="live" aria-selected="true">실전</button>
+      <button role="tab" data-tab="team">내 팀</button>
+      <button role="tab" data-tab="recommend">파티 추천</button>
+      <button role="tab" data-tab="review">복기</button>
+      <button role="tab" data-tab="dex">도감</button>
+      <button role="tab" data-tab="news">공식 공지</button>
+      <button role="tab" data-tab="progress" class="tab-dev">개발 현황</button>
+    </nav>
   </header>
-
-  <nav class="tabs" role="tablist" aria-label="화면">
-    <button role="tab" data-tab="progress" aria-selected="true">진행 현황</button>
-    <button role="tab" data-tab="battle">배틀 해보기</button>
-    <button role="tab" data-tab="recommend">파티 추천</button>
-    <button role="tab" data-tab="live">실전</button>
-    <button role="tab" data-tab="select">선출 추천</button>
-    <button role="tab" data-tab="review">복기</button>
-    <button role="tab" data-tab="dex">도감</button>
-    <button role="tab" data-tab="team">내 팀</button>
-    <button role="tab" data-tab="news">공식 공지</button>
-  </nav>
+  <div id="engine-alert" class="engine-alert" role="alert" hidden>
+    <span>계산 엔진에 연결되지 않았습니다. 실전과 파티 추천을 쓰려면 엔진을 켠 뒤 다시 확인하세요.</span>
+    <button class="btn btn-sm" id="engine-retry">다시 확인</button>
+  </div>
 
   <main>
     <!-- 진행 현황 -->
-    <section id="tab-progress" class="tab-panel" role="tabpanel">
+    <section id="tab-progress" class="tab-panel" role="tabpanel" hidden>
+      <div class="dev-head">
+        <h2>개발 현황</h2>
+        <div class="topbar-meta">
+          <span id="engine-pill" class="pill">엔진 확인 중</span>
+          <span id="branch-pill" class="pill pill-quiet"></span>
+        </div>
+      </div>
       <div class="track-wrap">
         <ol id="stage-track" class="stage-track" aria-label="개발 단계"></ol>
       </div>
@@ -81,95 +85,44 @@
       </div>
     </section>
 
-    <!-- 배틀 해보기 -->
-    <section id="tab-battle" class="tab-panel" role="tabpanel" hidden>
-      <div class="battle-bar">
-        <p class="muted">무작위로 만든 내 팀으로, 무작위로 행동하는 봇과 한 판을 둡니다. 상대 정보는 게임처럼 공개된 것만 보입니다.</p>
-        <div class="battle-controls">
-          <input id="battle-seed" class="input" placeholder="시드 (비우면 무작위)" aria-label="시드">
-          <button class="btn btn-primary" id="battle-new">새 배틀</button>
-        </div>
-      </div>
-      <div id="battle-empty" class="empty">
-        <p>새 배틀을 누르면 양쪽 팀 6마리가 나오고, 선출 3마리와 선봉을 고르는 것부터 시작합니다.</p>
-      </div>
-      <div id="battle" class="battle" hidden>
-        <div class="arena">
-          <div class="side side-opp">
-            <div class="side-label">상대</div>
-            <div id="opp-roster" class="roster"></div>
-            <div id="opp-active" class="active-card"></div>
-          </div>
-          <div class="side side-me">
-            <div id="me-active" class="active-card"></div>
-            <div id="me-roster" class="roster"></div>
-            <div class="side-label">나</div>
-          </div>
-          <div id="action-area" class="action-area"></div>
-        </div>
-        <aside class="log-wrap">
-          <div class="panel-head"><h2>배틀 로그</h2><span id="battle-turn" class="muted"></span></div>
-          <ol id="battle-log" class="log" aria-live="polite"></ol>
-        </aside>
-      </div>
-    </section>
-
     <!-- 파티 추천 -->
     <section id="tab-recommend" class="tab-panel" role="tabpanel" hidden>
       <div class="panel">
+        <div class="panel-head"><h2>파티 추천받기</h2><span class="muted">넣고 싶은 포켓몬을 정하면 나머지를 채워 6마리를 추천합니다.</span></div>
         <div class="rec-form">
           <label>꼭 넣을 포켓몬 <input id="rec-fix" class="input" placeholder="예: 한카리아스, 누리레느 (비우면 6마리 모두 생성)"></label>
           <label>뺄 포켓몬 <input id="rec-exclude" class="input" placeholder="쉼표로 구분"></label>
-          <label>시드 <input id="rec-seed" class="input" placeholder="비우면 설정값 (같은 시드면 같은 결과)"></label>
-          <label>검증
-            <select id="rec-validate" class="input">
-              <option value="0">안 함</option>
-              <option value="300">메타 팀 300개 (600판, 약 15초)</option>
-              <option value="1200">메타 팀 1,200개 (2,400판, 약 50초)</option>
-            </select>
-          </label>
         </div>
+        <details class="panel-sub"><summary>세부 설정</summary>
+          <div class="rec-form">
+            <label>시드 <input id="rec-seed" class="input" placeholder="비우면 기본값 (같은 시드면 같은 결과)"></label>
+            <label>추천 후 대전으로 확인
+              <select id="rec-validate" class="input">
+                <option value="0">안 함</option>
+                <option value="300">메타 팀 300개 (600판, 약 15초)</option>
+                <option value="1200">메타 팀 1,200개 (2,400판, 약 50초)</option>
+              </select>
+            </label>
+          </div>
+        </details>
         <div class="run-row">
           <button class="btn btn-primary" id="rec-run">추천받기</button>
           <input id="rec-save" class="input" placeholder="저장할 팀 이름 (선택)" aria-label="저장할 팀 이름">
-          <span class="muted">처음 한 번은 상성 계산에 1분쯤 걸리고, 그다음부터는 10초 남짓입니다. 계산하는 동안 다른 요청은 기다립니다.</span>
+          <span class="muted">처음 한 번은 1분쯤, 그다음부터는 10초 남짓 걸립니다.</span>
         </div>
       </div>
       <div id="rec-result" class="stack"></div>
     </section>
 
-    <section id="tab-select" class="tab-panel" role="tabpanel" hidden>
-      <div class="panel">
-        <div class="rec-form">
-          <label>내 팀 <select id="sel-team" class="input"><option value="">저장한 팀이 없습니다</option></select></label>
-          <label>상대 6마리 <input id="sel-opp" class="input" placeholder="예: 한카리아스, 누리레느, 하마돈, 브리두라스, 따라큐, 리자몽"></label>
-          <label>시드 <input id="sel-seed" class="input" placeholder="비우면 설정값"></label>
-          <label>시간 예산
-            <select id="sel-budget" class="input">
-              <option value="10">10초</option>
-              <option value="20" selected>20초 (기본)</option>
-              <option value="30">30초</option>
-              <option value="60">60초</option>
-            </select>
-          </label>
-        </div>
-        <div class="run-row">
-          <button class="btn btn-primary" id="sel-run">선출 추천받기</button>
-          <span class="muted">팀은 '팀 검증' 탭이나 파티 추천에서 저장합니다. 상대 이름은 한국어·영어 모두 됩니다. 계산하는 동안 다른 요청은 기다립니다.</span>
-        </div>
-      </div>
-      <div id="sel-result" class="stack"></div>
-    </section>
-
     <section id="tab-live" class="tab-panel" role="tabpanel" hidden>
       <div class="panel" id="live-setup">
-        <div class="panel-head"><h2>1. 상대 6마리 → 선출 추천</h2><span class="muted">팀 프리뷰에서 상대 6마리를 보고 입력하세요.</span></div>
+        <div class="panel-head"><h2>상대 팀 보고 선출 정하기</h2><span class="muted">팀 프리뷰에 나온 상대 6마리를 입력하세요.</span></div>
         <div class="rec-form">
           <label>내 팀 <select id="live-team" class="input"><option value="">저장한 팀이 없습니다</option></select></label>
           <label>상대 6마리 <input id="live-opp" class="input" placeholder="예: 한카리아스, 누리레느, 하마돈, 브리두라스, 따라큐, 리자몽"></label>
         </div>
         <div class="run-row"><button class="btn btn-primary" id="live-select">선출 추천받기 (최대 20초)</button>
-          <span class="muted">팀은 '팀 검증' 탭이나 파티 추천에서 저장합니다.</span></div>
+          <span class="muted" id="live-team-hint">팀은 '내 팀'이나 '파티 추천'에서 저장합니다.</span></div>
         <div id="live-select-result" class="stack"></div>
       </div>
       <div id="live-battle" class="stack"></div>
@@ -177,7 +130,8 @@
 
     <section id="tab-review" class="tab-panel" role="tabpanel" hidden>
       <div class="panel">
-        <div class="panel-head"><h2>배틀 기록</h2><span class="muted">pokechamp battle로 진행한 배틀이 저장됩니다. 자동 배틀(sim)은 검증용입니다.</span></div>
+        <div class="panel-head"><h2>배틀 기록</h2><label class="check muted"><input type="checkbox" id="battle-show-sim"> 자동 대전 기록도 보기</label></div>
+        <p class="muted">실전 탭에서 끝낸 배틀이 쌓입니다. 복기를 누르면 턴별 승률을 볼 수 있습니다.</p>
         <table class="table" id="battle-list"><thead><tr><th>#</th><th>일시</th><th>종류</th><th>결과</th><th>상대</th><th></th></tr></thead><tbody></tbody></table>
       </div>
       <div id="review-result" class="stack"></div>
@@ -199,7 +153,7 @@
       </div>
     </section>
 
-    <!-- 팀 검증 -->
+    <!-- 내 팀 -->
     <section id="tab-team" class="tab-panel" role="tabpanel" hidden>
       <div class="panel">
         <div class="panel-head"><h2>팀 만들기</h2><span class="muted">칸을 눌러 고르세요 (검색 가능, 많이 쓰는 것이 위에 나옵니다)</span></div>
@@ -207,7 +161,7 @@
         <div class="run-row">
           <input id="builder-name" class="input" placeholder="팀 이름" aria-label="팀 이름">
           <label class="check"><input type="checkbox" id="builder-replace"> 같은 이름이면 덮어쓰기</label>
-          <button class="btn" id="builder-check">검증</button>
+          <button class="btn" id="builder-check">규칙 확인</button>
           <button class="btn btn-primary" id="builder-save">팀 저장</button>
           <button class="btn" id="builder-clear">비우기</button>
         </div>
@@ -217,7 +171,7 @@
             placeholder="한카리아스 @ 구애스카프&#10;특성: 까칠한피부&#10;명랑 성격&#10;SP: 2 HP / 32 공격 / 32 스피드&#10;- 지진&#10;- 역린"></textarea>
           <label class="check"><input type="checkbox" id="team-fill"> 빈 항목을 최신 통계 기본값으로 채우기</label>
           <div class="run-row">
-            <button class="btn btn-primary" id="team-validate">검증</button>
+            <button class="btn" id="team-validate">규칙 확인</button>
             <button class="btn" id="team-random">무작위 팀 넣기</button>
             <button class="btn" id="team-to-builder">위 칸으로 옮기기</button>
           </div>
