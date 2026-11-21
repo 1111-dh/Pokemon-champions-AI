@@ -82,3 +82,19 @@ def test_trend_unknown_with_single_snapshot(conn):
     snap(conn, "2026-11-19", ranks={"garchomp": 1})
     t = Priors(conn, today=date(2026, 11, 19), cfg=CFG).trend("garchomp")
     assert not t.known and t.delta is None and t.rank_now == 1
+
+
+def test_local_meta_blend_and_bring_rates():
+    from pokechamp.data.local_meta import blend_weights, bring_rates, bring_stats, species_counts
+    pub = {"garchomp": 0.5, "primarina": 0.3, "lucario": 0.2}
+    assert blend_weights(pub, {}, 0, 30) == pub                              # 기록이 없으면 공개 통계 그대로
+    recs = [[{"species": "dragonite", "brought": True}, {"species": "garchomp", "brought": False}]] * 10
+    w = blend_weights(pub, species_counts(recs), len(recs), 30)
+    assert abs(sum(w.values()) - 1) < 1e-9
+    assert w["dragonite"] > 0 and w["garchomp"] > pub["garchomp"] * 0.75   # 로컬에서 자주 본 종이 생기고 공개 비중은 크게 안 깎인다
+    w_many = blend_weights(pub, species_counts(recs * 30), len(recs) * 30, 30)
+    assert w_many["dragonite"] > w["dragonite"]                             # 판이 쌓일수록 로컬 비중이 커진다
+    r = bring_rates(bring_stats(recs), 0.5, 4)
+    assert r["dragonite"] > 0.8 and r["garchomp"] < 0.2
+    r1 = bring_rates(bring_stats(recs[:1]), 0.5, 4)
+    assert 0.5 < r1["dragonite"] < 0.7                                      # 표본이 적으면 0.5에 가깝다

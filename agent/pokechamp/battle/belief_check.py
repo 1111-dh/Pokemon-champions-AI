@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 from collections import defaultdict
 from typing import Any
@@ -53,6 +54,8 @@ def run(conn, client: EngineClient, n_battles: int, seed: str, use_damage: bool 
     pool = list(w)[:80]
     weights = [w[s] for s in pool]
     agg: dict[str, list[tuple[float, float]]] = defaultdict(list)
+    calib: list[tuple[float, int]] = []          # (예측 확률, 맞음 여부) — 도구 후보마다 (PROJECT_PLAN 10절 보정 곡선)
+    logloss = {"prior": [], "posterior": []}
     contradictions, evidence = 0, defaultdict(int)
     for b in range(n_battles):
         mine = client.batch("/random_team", [{"seed": f"{seed}-{b}-me"}])[0]["result"]["team"]
@@ -98,10 +101,23 @@ def run(conn, client: EngineClient, n_battles: int, seed: str, use_damage: bool 
             }
             for k, f in checks.items():
                 agg[k].append((_p(_Prior, f), _p(mb, f)))
+            true_item = to_id(t.get("item") or "")
+            for item, pr in mb.marginal("item"):
+                calib.append((float(pr), int(to_id(item or "") == true_item)))
+            logloss["prior"].append(-math.log(max(1e-3, _p(_Prior, checks["item"]))))
+            logloss["posterior"].append(-math.log(max(1e-3, _p(mb, checks["item"]))))
     out = {"battles": n_battles, "use_damage": use_damage, "particles": n_particles, "contradictions": contradictions,
            "evidence": dict(evidence)}
     for k, xs in agg.items():
         out[k] = {"mons": len(xs), "prior": round(sum(a for a, _ in xs) / len(xs), 3),
                   "posterior": round(sum(b for _, b in xs) / len(xs), 3),
                   "improved_share": round(sum(1 for a, b in xs if b > a + 1e-9) / len(xs), 3)}
+    bins = []
+    for lo in [i / 10 for i in range(10)]:
+        xs = [(p, y) for p, y in calib if lo <= p < lo + 0.1 or (lo == 0.9 and p == 1.0)]
+        if xs:
+            bins.append({"range": f"{lo:.1f}~{lo + 0.1:.1f}", "n": len(xs), "predicted": round(sum(p for p, _ in xs) / len(xs), 3),
+                         "actual": round(sum(y for _, y in xs) / len(xs), 3)})
+    out["item_calibration"] = bins
+    out["item_logloss"] = {k: round(sum(v) / len(v), 3) for k, v in logloss.items() if v}
     return out

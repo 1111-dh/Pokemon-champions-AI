@@ -39,6 +39,8 @@ def priors_config() -> dict[str, Any]:
     c.setdefault("trend_max_gap_days", 14)
     c.setdefault("previous_regulation_weight", 0.2)
     c.setdefault("rank_weight_exponent", 1.0)
+    c.setdefault("local_meta_strength", 30.0)
+    c.setdefault("local_bring_prior_n", 4.0)
     return c
 
 

@@ -284,6 +284,11 @@ class Selector:
         sw = self.priors.species_weights()
         floor = min(sw.values()) if sw else 1.0
         wsp = np.array([sw.get(sp, floor) for sp in opp_species]) ** float(cfg["opponent_usage_exponent"])
+        # 로컬 선출률(상대 모델 학습, 단계 6): 내 실제 배틀에서 그 종이 보였을 때 실제로 나온 비율. 기록이 없으면 모두 0.5라 영향 없음
+        from pokechamp.data.local_meta import bring_rates, bring_stats, local_records
+        rates = bring_rates(bring_stats(local_records(self.conn, self.regulation)), 0.5,
+                            float(self.priors.cfg["local_bring_prior_n"]))
+        wsp = wsp * np.array([rates.get(sp, 0.5) / 0.5 for sp in opp_species])
         prior = np.array([np.prod(wsp[list(p.order)]) for p in opp_picks])
         q = opponent_model(r.H, list(range(len(my_picks))), prior / prior.sum(), float(cfg["opponent_model_temperature"]))
         mix = float(cfg["opponent_model_mix"])
