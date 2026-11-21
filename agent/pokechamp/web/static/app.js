@@ -520,6 +520,34 @@ $("#sel-run").addEventListener("click", (ev) => withBusy(ev.currentTarget, async
 }));
 document.querySelector('.tabs button[data-tab="select"]').addEventListener("click", loadSelectTeams);
 
+// ---------------- 복기 ----------------
+async function loadBattles() {
+  try {
+    const rows = await api("/api/battles");
+    $("#battle-list tbody").innerHTML = rows.length ? rows.map((r) => `<tr><td>${r.id}</td><td>${esc((r.played_at || "").slice(0, 16))}</td>
+      <td>${r.source === "manual" ? "실제" : "자동"}</td><td>${esc({ win: "승", loss: "패", tie: "무" }[r.result] || "-")}</td>
+      <td>${esc(r.opp.join(", "))}</td><td><button class="btn" data-review="${r.id}">복기</button></td></tr>`).join("")
+      : `<tr><td colspan="6" class="muted">아직 기록이 없습니다.</td></tr>`;
+    document.querySelectorAll("[data-review]").forEach((b) => b.addEventListener("click", (ev) => withBusy(ev.currentTarget, () => runReview(b.dataset.review))));
+  } catch (e) { toast(e.message); }
+}
+async function runReview(id) {
+  $("#review-result").innerHTML = `<div class="panel muted">턴마다 다시 계산하는 중입니다… (턴 수 × 몇 초)</div>`;
+  try {
+    const r = await api("/api/review", { id: Number(id) });
+    const flag = { mistake: "실수 후보", unlucky: "정상 판단(운)" };
+    $("#review-result").innerHTML = `<div class="panel"><div class="panel-head"><h2>#${r.battle_id} 턴별 승률</h2>
+      <span class="muted">결과 ${esc({ win: "승", loss: "패", tie: "무" }[r.result] || "미기록")} · 실수 후보 턴 ${esc(r.mistakes.join(", ") || "없음")}</span></div>
+      <div class="review-chart">${r.svg}</div>
+      <table class="table"><thead><tr><th>턴</th><th>승률</th><th>실제 수</th><th>최선 수</th><th>손해</th><th>표시</th><th>입력</th></tr></thead><tbody>
+      ${r.rows.map((p) => `<tr><td>${p.turn}${p.phase === "switch" ? " (교체)" : ""}</td><td>${p.win == null ? "-" : pct0(p.win)}</td>
+        <td>${esc(p.actual)}</td><td>${esc(p.best)}</td><td>${p.regret == null ? "-" : p.regret.toFixed(2)}</td>
+        <td>${esc(flag[p.flag] || "")}</td><td class="muted">${esc(p.input)}</td></tr>`).join("")}</tbody></table>
+      <p class="muted">승률은 상대 세트 샘플 × 롤아웃으로 다시 계산한 추정입니다. 인게임 결과는 성능 지표가 아니라 복기용입니다.</p></div>`;
+  } catch (e) { $("#review-result").innerHTML = ""; throw e; }
+}
+document.querySelector('.tabs button[data-tab="review"]').addEventListener("click", loadBattles);
+
 // ---------------- 공식 공지 ----------------
 async function loadNews() {
   try {

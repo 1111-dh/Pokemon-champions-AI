@@ -47,6 +47,7 @@ class App:
             "/api/news": self.news,
             "/api/engine": self.engine_health,
             "/api/teams": lambda q: [{k: v for k, v in t.items() if k != "team_json"} for t in list_teams(self.conn)],
+            "/api/battles": self.battles,
         }
         self.post_routes: dict[str, Callable[[dict], Any]] = {
             "/api/battle/new": lambda b: self.playground.new(b.get("seed") or None),
@@ -55,6 +56,7 @@ class App:
             "/api/team/save": self.team_save,
             "/api/team/recommend": self.team_recommend,
             "/api/select": self.select,
+            "/api/review": self.review,
             "/api/team/random": lambda b: self.client.batch("/random_team", [{"seed": b.get("seed") or secrets.token_hex(4)}])[0]["result"],
             "/api/selfplay": self.selfplay,
             "/api/news/check": self.news_check,
@@ -203,6 +205,25 @@ class App:
             o["sprite"] = sprite_id(o["name_en"])
         r["text"] = text_report(r, show_matrix=True)
         return json.loads(json.dumps(r, default=float))
+
+    # ---------- 복기 ----------
+    def battles(self, q: dict) -> list:
+        from pokechamp.battle.store import list_battles
+        return [{k: v for k, v in r.items() if k != "opp_team_json"} for r in list_battles(self.conn)]
+
+    def review(self, b: dict) -> dict:
+        """복기 (PROJECT_PLAN 10절): 턴마다 탐색을 다시 돌리므로 턴 수 × 몇 초가 걸린다."""
+        from pokechamp.battle.review import label, review
+        from pokechamp.battle.search import SearchConfig
+        from pokechamp.input.battle_text import BattleText
+        bid = b.get("id") or "latest"
+        r = review(self.conn, bid, self.client, SearchConfig(seed=f"review-{bid}", model_reps=6))
+        bt = BattleText(self.conn)
+        rows = [{"turn": p["turn"], "phase": p["phase"], "win": p.get("win"), "regret": p.get("regret"),
+                 "actual": label(p.get("actual"), bt), "best": label(p.get("best"), bt), "flag": p.get("flag"),
+                 "input": p["input"], "error": p.get("error")} for p in r["points"]]
+        return {"battle_id": r["battle_id"], "result": r["result"], "source": r["source"], "svg": r["svg"], "rows": rows,
+                "mistakes": r["mistakes"], "unlucky": r["unlucky"]}
 
     # ---------- 공식 공지 ----------
     def news(self, q: dict) -> dict:

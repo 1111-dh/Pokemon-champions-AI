@@ -195,6 +195,17 @@ CREATE TABLE IF NOT EXISTS my_teams (
   valid INTEGER,
   problems_json TEXT
 );
+-- 내가 둔 배틀 기록 (PROJECT_PLAN 10절 복기, 4.5 로컬 메타). source: manual(사람이 입력) | sim(검증용 자동, 로컬 메타에 섞지 않음)
+CREATE TABLE IF NOT EXISTS my_battles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  played_at TEXT NOT NULL,
+  regulation TEXT,
+  source TEXT NOT NULL DEFAULT 'manual',
+  my_team_json TEXT NOT NULL,
+  opp_team_json TEXT NOT NULL,
+  result TEXT,
+  log_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS update_log (
   id INTEGER PRIMARY KEY,
   ran_at TEXT NOT NULL,
