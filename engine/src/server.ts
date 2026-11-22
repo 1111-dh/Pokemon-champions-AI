@@ -14,6 +14,7 @@ const ROUTES: Record<string, (req: any) => unknown> = {
   '/matchup_fast': E.matchupFast,
   '/build_state': E.buildState,
   '/stats': E.stats,
+  '/entry_hazards': E.entryHazards,
   '/bot_choice': E.botChoice,
   '/moves_info': E.movesInfo,
 };

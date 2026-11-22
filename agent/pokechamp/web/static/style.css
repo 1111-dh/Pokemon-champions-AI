@@ -398,3 +398,26 @@ main { padding: 22px 28px 60px; max-width: 1360px; margin: 0 auto; }
 .calc-screens { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .calc-hint { margin: -2px 0 10px; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--amber-soft); }
 .calc-hint p { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+/* ---------- 실전 필드 막대: 내 쪽 · 가운데 · 상대 쪽 ---------- */
+.field-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: center;
+  margin: 4px 0 12px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--bg); }
+.field-side { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.field-side.opp { justify-content: flex-end; }
+.field-center { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.field-label { font-size: 12px; color: var(--ink-2); margin-right: 2px; }
+.field-chip { font: inherit; font-size: 13px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+.field-chip[disabled] { cursor: default; }
+.field-chip b { font-weight: 700; }
+.field-chip .x { color: var(--ink-2); }
+.field-chip:not([disabled]):hover { border-color: var(--ink-2); }
+/* 종류별 색: 벽은 파랑, 순풍·트릭룸은 노랑, 설치기는 빨강 계열, 날씨·필드는 회색 */
+.field-chip.screen { background: var(--blue-soft); border-color: var(--blue); }
+.field-chip.speed { background: var(--amber-soft); border-color: var(--amber); }
+.field-chip.hazard { background: color-mix(in srgb, var(--red) 12%, var(--panel)); border-color: var(--red); }
+.field-add { margin: -4px 0 8px; }
+@media (max-width: 640px) {
+  .field-bar { grid-template-columns: minmax(0, 1fr); }
+  .field-side.opp, .field-center { justify-content: flex-start; }
+}

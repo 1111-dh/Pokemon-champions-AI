@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pokechamp.battle.events import Event, Turn
+from pokechamp.battle.field_moves import field_events
 from pokechamp.data.static.names import to_id
 
 WEATHER_ROCK = {"sun": "heatrock", "rain": "damprock", "sand": "smoothrock", "snow": "icyrock"}
@@ -22,6 +23,11 @@ WEATHER_ABILITY = {"drought": "sun", "drizzle": "rain", "sandstream": "sand", "s
 TERRAIN_ABILITY = {"electricsurge": "electric", "psychicsurge": "psychic", "grassysurge": "grassy", "mistysurge": "misty",
                    "hadronengine": "electric", "seedsower": "grassy"}
 BOOST_KEYS = ("atk", "def", "spa", "spd", "spe", "accuracy", "evasion")
+# 사이드 조건 (엔진 data/moves.ts, 챔피언스는 바꾸지 않음): 벽 5턴(빛의점토 8), 순풍 4턴, 트릭룸 5턴, 설치기는 겹 수
+TIMED = {"reflect": 5, "lightscreen": 5, "auroraveil": 5, "tailwind": 4}
+SCREENS = {"reflect", "lightscreen", "auroraveil"}
+HAZARD_MAX = {"stealthrock": 1, "spikes": 3, "toxicspikes": 2, "stickyweb": 1}
+TRICK_ROOM_TURNS = 5
 
 
 @dataclass
@@ -43,32 +49,12 @@ class Mon:
     transformed: bool = False         # 변신 중 (상대의 기술을 쓴다)
     last_move: str = ""               # 출전 중 마지막으로 쓴 기술 (구애 고정 판단)
     held: str | None = None           # 트릭·바꿔치기·도둑질 등으로 바뀐 지금 도구 (None = 원래 도구 그대로, "" = 없음)
+    hp_estimated: bool = False        # HP가 관찰이 아니라 추정(설치기 등장 데미지)에서 왔다 → 데미지 증거로 쓰지 않는다
 
     def summary(self) -> dict[str, Any]:
         return {"species": self.species, "hp": self.hp, "hp_abs": self.hp_abs, "status": self.status, "fainted": self.fainted,
                 "boosts": {k: v for k, v in self.boosts.items() if v}, "moves": list(self.moves), "item": self.item, "held": self.held,
                 "item_consumed": self.item_consumed, "ability": self.ability, "mega": self.mega}
-
-
-@dataclass
-class Side:
-    name: str                         # "me" / "opp"
-    mons: dict[str, Mon] = field(default_factory=dict)
-    order: list[str] = field(default_factory=list)       # 팀 순서 (기본 폼 id)
-    active: str | None = None
-    mega_used: bool = False
-
-    def get(self, species: str, create: bool = False) -> Mon | None:
-        if species in self.mons:
-            return self.mons[species]
-        if create:
-            self.mons[species] = Mon(species)
-            self.order.append(species)
-            return self.mons[species]
-        return None
-
-    def alive(self) -> list[str]:
-        return [s for s in self.order if self.mons[s].seen and not self.mons[s].fainted]
 
 
 @dataclass
@@ -86,10 +72,36 @@ class Clock:
         return max(0, self.lo - turn + 1), max(0, (self.hi or self.lo) - turn + 1)
 
 
+
+@dataclass
+class Side:
+    name: str                         # "me" / "opp"
+    mons: dict[str, Mon] = field(default_factory=dict)
+    order: list[str] = field(default_factory=list)       # 팀 순서 (기본 폼 id)
+    active: str | None = None
+    mega_used: bool = False
+    timed: dict[str, Clock] = field(default_factory=dict)    # 벽·순풍: 조건 id → 끝나는 턴
+    hazards: dict[str, int] = field(default_factory=dict)    # 설치기: 조건 id → 겹 수
+
+    def get(self, species: str, create: bool = False) -> Mon | None:
+        if species in self.mons:
+            return self.mons[species]
+        if create:
+            self.mons[species] = Mon(species)
+            self.order.append(species)
+            return self.mons[species]
+        return None
+
+    def alive(self) -> list[str]:
+        return [s for s in self.order if self.mons[s].seen and not self.mons[s].fainted]
+
+
 class BattleState:
-    def __init__(self, my_team: list[dict[str, Any]], opp_species: list[str], base_of=None):
-        """base_of: 종 이름 → 기본 폼 id 함수(battle.events.SpeciesResolver) 또는 메가 → 기본 폼 사전."""
+    def __init__(self, my_team: list[dict[str, Any]], opp_species: list[str], base_of=None, derive_field: bool = True):
+        """base_of: 종 이름 → 기본 폼 id 함수(battle.events.SpeciesResolver) 또는 메가 → 기본 폼 사전.
+        derive_field: 기술 사건에서 벽·설치기·트릭룸 변화를 만든다 (사용자 입력 경로). 엔진 로그 경로는 False(로그가 알려 준다)."""
         self.base_of = base_of or {}
+        self.derive_field = derive_field
         self.me = Side("me")
         for st in my_team:
             sp = self.base(st["species"])
@@ -100,6 +112,7 @@ class BattleState:
             self.opp.get(self.base(sp), create=True)
         self.weather = Clock()
         self.terrain = Clock()
+        self.trickroom = Clock()
         self.turn = 0
         self.log: list[Turn] = []
         # 이번 턴에 기절한 편 → 그 편의 다음 교체는 턴 끝 처리 뒤의 교체(9세대는 기절 교체를 턴 끝에 한다)
@@ -127,6 +140,51 @@ class BattleState:
         self.turn += 1
         self.fainted_this_turn.clear()
         self.after_residual = False
+        # 시계가 다 된 벽·순풍·트릭룸을 끈다 (끝나는 턴 상한이 지났을 때. 상대 벽은 그 전까지 0~n턴으로 보인다)
+        for sd in (self.me, self.opp):
+            for k in [k for k, c in sd.timed.items() if (c.hi or c.lo or 0) < self.turn]:
+                del sd.timed[k]
+        if self.trickroom.kind != "none" and (self.trickroom.hi or self.trickroom.lo or 0) < self.turn:
+            self.set_clock(self.trickroom, "none", None, None)
+
+    def _field_event(self, e: Event) -> bool:
+        """벽·순풍·설치기·트릭룸 사건이면 적용하고 True."""
+        if e.kind == "room":
+            n = e.amount or TRICK_ROOM_TURNS
+            self.set_clock(self.trickroom, e.value, *((None, None) if e.value == "none" else (self.end_turn(n), self.end_turn(n))))
+        elif e.kind == "courtchange":
+            self.me.timed, self.opp.timed = self.opp.timed, self.me.timed
+            self.me.hazards, self.opp.hazards = self.opp.hazards, self.me.hazards
+        elif e.kind in ("sidestart", "sideend"):
+            self._side_condition(self.side(e.side), e)
+        else:
+            return False
+        return True
+
+    def _side_condition(self, sd: Side, e: Event) -> None:
+        cond = e.value
+        if e.kind == "sideend":
+            sd.timed.pop(cond, None)
+            sd.hazards.pop(cond, None)
+            return
+        if cond in HAZARD_MAX:
+            sd.hazards[cond] = min(HAZARD_MAX[cond], e.amount if e.amount else sd.hazards.get(cond, 0) + 1)
+            return
+        if cond not in TIMED:
+            return
+        if e.amount:                                   # 직접 켜기: 남은 턴 확정
+            sd.timed[cond] = Clock(cond, self.end_turn(e.amount), self.end_turn(e.amount))
+            return
+        if cond in sd.timed:                           # 같은 벽·순풍이 켜져 있으면 기술이 실패한다
+            return
+        lo = hi = TIMED[cond]
+        if cond in SCREENS:
+            m = sd.mons.get(sd.active or "")
+            item = (m.held if m and m.held is not None else (m.item if m else "")) or ""
+            known = item if (sd is self.me or item) else ""
+            lo = 8 if known == "lightclay" else 5
+            hi = 8 if (known == "lightclay" or (sd is self.opp and not known)) else 5
+        sd.timed[cond] = Clock(cond, self.end_turn(lo), self.end_turn(hi))
 
     def apply(self, events: list[Event]) -> list[str]:  # noqa: C901 (사건 분기)
         warns: list[str] = []
@@ -143,6 +201,8 @@ class BattleState:
                 continue
             if e.kind == "terrain":
                 self.set_clock(self.terrain, e.value, None, None)
+                continue
+            if self._field_event(e):
                 continue
             sd = self.side(e.side)
             sp = self.find(sd, self.base(e.species)) if e.species else sd.active
@@ -187,11 +247,18 @@ class BattleState:
                         warns.append(f"상대 {sp}의 기술이 5개 이상 입력됐다: {', '.join(m.moves)}")
                 if m.fainted:
                     warns.append(f"기절한 {sp}이(가) 기술을 썼다")
+                if self.derive_field and sd.name in ("me", "opp"):
+                    for fe in field_events(sd.name, to_id(e.move), self):
+                        if fe.kind == "terrain":
+                            self.set_clock(self.terrain, fe.value, None, None)
+                        else:
+                            self._field_event(fe)
             elif e.kind == "mega":
                 if sd.mega_used and not m.mega:
                     warns.append(f"{'상대' if sd is self.opp else '내'} 쪽은 이미 메가진화했다 (배틀당 1회)")
                 m.mega, sd.mega_used = True, True
             elif e.kind == "hp":
+                m.hp_estimated = e.note == "hazard"
                 if e.hp is not None:
                     if m.fainted and e.hp > 0:
                         warns.append(f"기절한 {sp}의 HP가 {e.hp}%로 입력됐다")
@@ -289,4 +356,6 @@ class BattleState:
                        "mons": [self.me.mons[s].summary() for s in self.me.order]},
                 "opp": {"active": self.opp.active, "mega_used": self.opp.mega_used,
                         "mons": [self.opp.mons[s].summary() for s in self.opp.order]},
-                "weather": vars(self.weather), "terrain": vars(self.terrain)}
+                "weather": vars(self.weather), "terrain": vars(self.terrain), "trickroom": vars(self.trickroom),
+                "side_conditions": {n: {"timed": {k: vars(c) for k, c in sd.timed.items()}, "hazards": dict(sd.hazards)}
+                                    for n, sd in (("me", self.me), ("opp", self.opp))}}

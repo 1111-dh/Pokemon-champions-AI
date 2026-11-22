@@ -227,7 +227,11 @@ export interface BuildStateReq {
   field?: { weather?: string; weatherTurns?: number; terrain?: string; terrainTurns?: number };
   megaUsed?: { p1?: boolean; p2?: boolean };
   turn?: number;
+  // 벽·순풍은 남은 턴, 설치기는 겹 수 (실전 추적 상태). 트릭룸은 남은 턴
+  sideConditions?: { p1?: Record<string, number>; p2?: Record<string, number> };
+  trickRoom?: number;
 }
+const HAZARDS = ['stealthrock', 'spikes', 'toxicspikes', 'stickyweb'];
 const WEATHER_IDS: Record<string, string> = { sun: 'sunnyday', rain: 'raindance', sand: 'sandstorm', snow: 'snowscape' };
 const TERRAIN_IDS: Record<string, string> = { electric: 'electricterrain', grassy: 'grassyterrain', psychic: 'psychicterrain',
   misty: 'mistyterrain' };
@@ -285,6 +289,21 @@ export function buildState(req: BuildStateReq) {
   const t = TERRAIN_IDS[f.terrain ?? ''] ?? '';
   battle.field.terrain = t;
   battle.field.terrainState = battle.initEffectState(t ? { id: t, duration: Math.max(1, f.terrainTurns ?? 5) } as any : { id: '' });
+  for (const sid of ['p1', 'p2'] as SideId[]) {
+    const side = battle.getSide(sid);
+    for (const [id, n] of Object.entries(req.sideConditions?.[sid] ?? {})) {
+      if (!n) continue;
+      if (HAZARDS.includes(id)) {
+        for (let i = 0; i < n; i++) side.addSideCondition(id, side.active[0]);   // 겹마다 한 번 (onSideRestart가 겹을 늘린다)
+      } else if (side.addSideCondition(id, side.active[0]) || side.sideConditions[id]) {
+        side.sideConditions[id].duration = n;
+      }
+    }
+  }
+  if (req.trickRoom) {
+    battle.field.addPseudoWeather('trickroom', battle.p1.active[0]);
+    if (battle.field.pseudoWeather.trickroom) battle.field.pseudoWeather.trickroom.duration = req.trickRoom;
+  }
   if (req.turn) battle.turn = req.turn;
   // 덮어쓴 상태로 기술 막기(구애 고정 등)와 갇힘을 다시 판정한다 (Showdown endTurn과 같은 순서)
   for (const side of battle.sides) {
@@ -326,6 +345,31 @@ export function stats(req: { set: any; mega?: boolean; status?: string }) {
   }
   return { species: m.species.name, hp: m.maxhp, atk: m.storedStats.atk, def: m.storedStats.def, spa: m.storedStats.spa,
     spd: m.storedStats.spd, spe: m.storedStats.spe, speStatus, ability: m.ability, types: m.getTypes() };
+}
+
+// ---------- /entry_hazards ----------
+// 그 포켓몬이 설치기 위로 교체로 나왔을 때의 등장 효과 (데미지, 독·맹독, 끈적끈적네트). 실제 교체 처리(runSwitch)를 돌려서 잰다.
+export function entryHazards(req: { set: any; mega?: boolean; hazards: Record<string, number> }) {
+  const filler = { species: 'Snorlax', nature: 'Hardy', moves: ['Splash'] };
+  const target = { ...req.set, level: 50, moves: req.set.moves?.length ? req.set.moves : ['splash'] };
+  const battle = new PS.Battle({ formatid: 'gen9championscustomgame', seed: 'sodium,00000000000000000000000000000000',
+    p1: { name: 'a', team: [filler, target] }, p2: { name: 'b', team: [filler] } });
+  battle.choose('p1', 'team 12');
+  battle.choose('p2', 'team 1');
+  const side = battle.p1;
+  const mon = side.pokemon.find((p: any) => !p.isActive) ?? side.pokemon[1];
+  if (req.mega) {
+    const forme = battle.actions.canMegaEvo(mon);
+    if (forme) mon.formeChange(forme, mon.getItem(), true);
+  }
+  for (const [id, n] of Object.entries(req.hazards ?? {})) {
+    for (let i = 0; i < (n || 0); i++) side.addSideCondition(id, side.active[0]);
+  }
+  battle.actions.switchIn(mon, 0);
+  battle.actions.runSwitch(mon);
+  return { damage: mon.maxhp - mon.hp, maxhp: mon.maxhp, status: mon.status || '',
+    boosts: Object.fromEntries(Object.entries(mon.boosts).filter(([, v]) => v)),
+    absorbed: !!req.hazards?.toxicspikes && !side.sideConditions.toxicspikes };   // 땅에 닿은 독 타입이 독압정을 흡수했다
 }
 
 // ---------- /bot_choice ----------

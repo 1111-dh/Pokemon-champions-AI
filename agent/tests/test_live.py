@@ -281,3 +281,105 @@ def test_team_builder_api(conn):
     assert parsed["sets"][0]["item"] == "choicescarf" and parsed["sets"][0]["nature"] == "jolly"
     a.team_delete({"name": "_pytest_빌더"})
     assert not any(t["name"] == "_pytest_빌더" for t in list_teams(conn))
+
+
+def _field_live(conn):
+    from pokechamp.battle.live import LiveBattle
+    from pokechamp.battle.search import SearchConfig
+    from pokechamp.engine_client import EngineClient
+    team = [
+        {"species": "Garchomp", "item": "Choice Scarf", "ability": "Rough Skin", "nature": "Jolly", "evs": {"atk": 32, "spe": 32},
+         "moves": ["Earthquake", "Outrage", "Rock Slide", "Fire Fang"]},
+        {"species": "Charizard", "item": "Charizardite Y", "ability": "Blaze", "nature": "Timid", "evs": {"spa": 32, "spe": 32},
+         "moves": ["Flamethrower", "Solar Beam", "Air Slash", "Roost"]},
+        {"species": "Primarina", "item": "Sitrus Berry", "ability": "Torrent", "nature": "Modest", "evs": {"hp": 32, "spa": 32},
+         "moves": ["Moonblast", "Surf", "Ice Beam", "Aqua Jet"]},
+    ]
+    lb = LiveBattle(conn, EngineClient(), team, ["garchomp", "primarina", "hippowdon", "archaludon", "mimikyu", "lucario"],
+                    cfg=SearchConfig(seed="t", samples=2, model_reps=2))
+    lb.start([1, 2, 3], "하마돈")
+    return lb
+
+
+def test_live_hazard_entry_damage(conn):
+    lb = _field_live(conn)
+    # 교체는 기술보다 먼저라, 스텔스록을 깐 다음 턴에 나온 포켓몬이 맞는다
+    v = lb.submit_turn({"first": "opp", "me": {"kind": "move", "move": "earthquake"},
+                        "opp": {"kind": "move", "move": "stealthrock"}, "opp_hp": 70})
+    assert any(c["id"] == "stealthrock" for c in v["field"]["me"]) and not v["warnings"]
+    v = lb.submit_turn({"first": "opp", "me": {"kind": "switch", "species": "charizard"}, "opp": {"kind": "none"}})
+    zard = next(m for m in v["mine"] if m["species"] == "charizard")
+    assert zard["active"] and zard["hp_abs"] == zard["hp_max"] - zard["hp_max"] // 2     # 불꽃·비행: 스텔스록 1/2
+    lb.end("aborted", save=False)
+
+
+def test_live_set_field_manual(conn):
+    lb = _field_live(conn)
+    v = lb.set_field("opp", "reflect", True, turns=3)
+    assert next(c for c in v["field"]["opp"] if c["id"] == "reflect")["remaining"] == [3, 3]
+    v = lb.set_field("field", "trickroom", True)
+    assert any(c["id"] == "trickroom" for c in v["field"]["center"])
+    v = lb.set_field("opp", "reflect", False)
+    assert not any(c["id"] == "reflect" for c in v["field"]["opp"])
+    lb.end("aborted", save=False)
+
+
+def test_text_input_sets_field(conn):
+    lb = _field_live(conn)
+    v = lb.apply("상대 하마돈 리플렉터")
+    assert any(c["id"] == "reflect" for c in v["field"]["opp"])
+    lb.end("aborted", save=False)
+
+
+def test_estimate_applies_defender_screens(conn):
+    lb = _field_live(conn)
+    plain = lb.estimate({"kind": "move", "move": "earthquake"}, {"kind": "none"})["opp_hp"]
+    lb.set_field("opp", "reflect", True)
+    walled = lb.estimate({"kind": "move", "move": "earthquake"}, {"kind": "none"})["opp_hp"]
+    assert walled > plain
+    lb.end("aborted", save=False)
+
+
+def test_estimate_switch_uses_incoming_with_hazards(conn):
+    lb = _field_live(conn)
+    lb.set_field("me", "stealthrock", True)
+    mx = lb.sess.my_stats[("charizard", False)]["hp"]
+    e = lb.estimate({"kind": "switch", "species": "charizard"}, {"kind": "none"})
+    assert e["my_hp"] == mx - mx // 2                      # 들어오는 리자몽 기준, 스텔스록 1/2
+    v = lb.submit_turn({"first": "opp", "me": {"kind": "switch", "species": "charizard"}, "opp": {"kind": "none"},
+                        "my_hp": e["my_hp"]})
+    zard = next(m for m in v["mine"] if m["species"] == "charizard")
+    assert zard["active"] and zard["hp_abs"] == mx - mx // 2 and zard["hp_max"] == mx
+    lb.end("aborted", save=False)
+
+
+def test_hazard_calc_uses_announced_balloon_and_current_item(conn):
+    lb = _field_live(conn)
+    lb.set_field("opp", "spikes", True, layers=3)
+    v = lb.submit_turn({"first": "opp", "me": {"kind": "move", "move": "earthquake"},
+                        "opp": {"kind": "switch", "species": "garchomp", "entry": ["item:airballoon"]}, "opp_hp": None})
+    chomp = next(m for m in v["opp"] if m["species"] == "garchomp")
+    assert chomp["active"] and chomp["hp"] == 100                 # 풍선: 압정 데미지 없음
+    lb.end("aborted", save=False)
+
+
+def test_field_events_roundtrip_as_text(conn):
+    from pokechamp.battle.events import Event
+    from pokechamp.input.battle_text import BattleText
+    bt = BattleText(conn)
+    evs = [Event("sidestart", "opp", value="reflect", amount=3), Event("sidestart", "me", value="spikes", amount=2),
+           Event("sideend", "me", value="toxicspikes"), Event("sidestart", "me", value="stealthrock"),
+           Event("room", None, value="trickroom", amount=4), Event("room", None, value="none"), Event("courtchange", None)]
+    text = bt.render(evs)
+    assert "상대 쪽 리플렉터 깔림 3턴" in text and "내 쪽 독압정 사라짐" in text and "트릭룸 끝" in text
+    back = bt.parse(text)
+    assert not back.errors
+    assert [(e.kind, e.side, e.value, e.amount) for e in back.events] == [(e.kind, e.side, e.value, e.amount) for e in evs]
+
+
+def test_manual_field_change_is_recorded(conn):
+    lb = _field_live(conn)
+    lb.set_field("opp", "reflect", True, turns=3)
+    v = lb.submit_turn({"first": "opp", "me": {"kind": "move", "move": "earthquake"}, "opp": {"kind": "none"}, "opp_hp": 80})
+    assert "상대 쪽 리플렉터 깔림 3턴" in v["history"][-1]
+    lb.end("aborted", save=False)

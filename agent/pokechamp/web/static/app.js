@@ -916,8 +916,7 @@ function renderLive(v) {
   live.view = v;
   if (!live.form || live.form.turn !== v.turn || live.form.phase !== v.phase) { live.form = freshForm(v); live.form.turn = v.turn; live.form.phase = v.phase; }
   const rec = v.recommendation, f = v.form || {}, F = live.form;
-  const field = [v.weather && `날씨 ${v.weather.name}${v.weather.remaining ? ` (${v.weather.remaining[0]}${v.weather.remaining[1] !== v.weather.remaining[0] ? "~" + v.weather.remaining[1] : ""}턴)` : ""}`,
-    v.terrain && `필드 ${v.terrain.name}${v.terrain.remaining ? ` (${v.terrain.remaining[0]}턴)` : ""}`].filter(Boolean).join(" · ");
+  const megaNote = [v.mega_used.me && "내 메가 사용함", v.mega_used.opp && "상대 메가 사용함"].filter(Boolean).join(" · ");
   const sel = (cond) => (cond ? " on" : "");
   const steps = v.phase === "replace" ? `<span class="step">① 행동</span> → <span class="step">② 결과</span> → <span class="step now">③ 기절 교체</span>`
     : `<span class="step now">① 행동</span> → <span class="step">② 결과</span> → <span class="step">③ 기절 교체(필요할 때)</span>`;
@@ -986,7 +985,8 @@ function renderLive(v) {
   }
   $("#live-battle").innerHTML = `
     <div class="panel"><div class="panel-head"><h2>${v.phase === "replace" ? "기절 교체" : v.phase === "over" ? "배틀 끝" : `${v.turn}턴`}</h2>
-      <span class="muted">${esc(field || "날씨·필드 없음")}${v.mega_used.me ? " · 내 메가 사용함" : ""}${v.mega_used.opp ? " · 상대 메가 사용함" : ""}</span></div>
+      <span class="muted">${esc(megaNote)}</span></div>
+      ${fieldBar(v.field)}
       <div class="grid-2"><div><h3>나</h3>${v.mine.map((m) => monCard(m, true)).join("")}</div>
         <div><h3>상대</h3>${v.opp.map((m) => monCard(m, false)).join("")}</div></div></div>
     ${v.phase === "replace" ? inputHtml + recHtml : recHtml + inputHtml}
@@ -1015,18 +1015,76 @@ async function refreshEstimate() {
     if ($("#f-est")) $("#f-est").textContent = `고른 기술로 예상한 값입니다${notes}. 게임 화면과 다르면 고치세요.`;
   } catch (e) { /* 예상값은 편의 기능이라 실패해도 넘어간다 */ }
 }
+// ---- 필드 막대: 내 쪽 · 가운데(날씨·필드·트릭룸) · 상대 쪽. 칩을 누르면 끄고, [+ 추가]로 직접 켠다 ----
+const FIELD_KIND = { reflect: "screen", lightscreen: "screen", auroraveil: "screen", tailwind: "speed", trickroom: "speed",
+  stealthrock: "hazard", spikes: "hazard", toxicspikes: "hazard", stickyweb: "hazard", weather: "weather", terrain: "weather" };
+// 직접 추가할 수 있는 것과 기본값(처음 지속 시간 또는 겹 수). 이름은 서버가 칩으로 돌려주는 한국어 기술 이름을 쓴다
+const FIELD_ADD = [["reflect", "리플렉터", 5], ["lightscreen", "빛의장막", 5], ["auroraveil", "오로라베일", 5], ["tailwind", "순풍", 4],
+  ["stealthrock", "스텔스록", 1], ["spikes", "압정뿌리기", 1], ["toxicspikes", "독압정", 1], ["stickyweb", "끈적끈적네트", 1], ["trickroom", "트릭룸", 5]];
+const HAZARD_IDS = ["stealthrock", "spikes", "toxicspikes", "stickyweb"];
+function fieldChip(c, side) {
+  const r = c.remaining;
+  const amount = c.layers ? (c.layers > 1 ? `×${c.layers}` : "") : r ? (r[0] === r[1] ? `${r[0]}턴` : `${r[0]}~${r[1]}턴`) : "";
+  const off = side !== "center" || c.id === "trickroom";
+  return `<button type="button" class="field-chip ${FIELD_KIND[c.id] || ""}" ${off ? `data-fieldoff="${side === "center" ? "field" : side}" data-cond="${c.id}" data-name="${esc(c.name)}" title="눌러서 끄기"` : "disabled"}>
+    ${esc(c.name)}${amount ? ` <b>${amount}</b>` : ""}${off ? ` <span class="x" aria-hidden="true">×</span>` : ""}</button>`;
+}
+function fieldBar(f) {
+  if (!f) return "";
+  const list = (xs, side, empty) => (xs.length ? xs.map((c) => fieldChip(c, side)).join("") : `<span class="muted small">${empty}</span>`);
+  return `<div class="field-bar">
+      <div class="field-side"><span class="field-label">내 쪽</span>${list(f.me, "me", "없음")}</div>
+      <div class="field-center">${list(f.center, "center", "날씨·필드 없음")}</div>
+      <div class="field-side opp"><span class="field-label">상대 쪽</span>${list(f.opp, "opp", "없음")}</div>
+    </div>
+    <details class="field-add"><summary class="small">+ 벽·순풍·설치기·트릭룸 직접 넣기 (자동으로 못 잡은 경우)</summary>
+      <div class="quick">
+        <select class="input input-sm" id="fa-side"><option value="me">내 쪽</option><option value="opp">상대 쪽</option></select>
+        <select class="input input-sm" id="fa-cond">${FIELD_ADD.map(([id, n]) => `<option value="${id}">${n}</option>`).join("")}</select>
+        <label class="small" id="fa-amount-label">남은 턴 <input type="number" min="1" max="8" class="input input-sm" id="fa-amount" value="5"></label>
+        <button type="button" class="btn btn-sm" id="fa-add">넣기</button>
+      </div></details>`;
+}
+function bindFieldBar() {
+  document.querySelectorAll("[data-fieldoff]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm(`${b.dataset.name}을(를) 끌까요?`)) return;
+    try { renderLive(await api("/api/live/field", { id: live.id, side: b.dataset.fieldoff, cond: b.dataset.cond, on: false })); }
+    catch (e) { toast(e.message); }
+  }));
+  const cond = $("#fa-cond");
+  if (!cond) return;
+  const sync = () => {
+    const [id, , def] = FIELD_ADD.find(([x]) => x === cond.value);
+    const hz = HAZARD_IDS.includes(id);
+    $("#fa-amount-label").firstChild.textContent = hz ? "겹 수 " : "남은 턴 ";
+    $("#fa-amount").max = hz ? ({ spikes: 3, toxicspikes: 2 }[id] || 1) : 8;
+    $("#fa-amount").value = def;
+    $("#fa-side").disabled = id === "trickroom";
+  };
+  cond.addEventListener("change", sync);
+  sync();
+  $("#fa-add").addEventListener("click", (ev) => withBusy(ev.currentTarget, async () => {
+    const id = cond.value, n = Number($("#fa-amount").value) || 0, hz = HAZARD_IDS.includes(id);
+    renderLive(await api("/api/live/field", { id: live.id, side: id === "trickroom" ? "field" : $("#fa-side").value, cond: id, on: true,
+      turns: hz ? 0 : n, layers: hz ? n : 0 }));
+  }));
+}
 function bindLive(v) {
+  bindFieldBar();
   const F = live.form, rerender = () => renderLive(live.view);
   document.querySelectorAll("[data-first]").forEach((b) => b.addEventListener("click", () => { F.first = b.dataset.first; rerender(); }));
   document.querySelectorAll("[data-my]").forEach((b) => b.addEventListener("click", () => {
     const [kind, id] = b.dataset.my.split(":");
     F.me = kind === "move" ? { kind, move: id, mega: F.me.mega || false } : kind === "switch" ? { kind, species: id } : { kind: "none" };
+    // 교체하면 남은 HP 칸은 들어오는 포켓몬의 값이다: 나가는 포켓몬 HP로 미리 채운 값을 비운다 (예상값이 다시 채운다)
+    if (kind === "switch" && !F.edited.me) F.my_hp = "";
     rerender(); refreshEstimate();
   }));
   document.querySelectorAll("[data-opp]").forEach((b) => b.addEventListener("click", () => {
     const [kind, id] = b.dataset.opp.split(":");
     F.opp = kind === "move" ? { kind, move: id, mega: F.opp.mega || false } : kind === "switch"
       ? { kind, species: id, entry: defaults(((v.form.opp_bench || []).find((b) => b.id === id) || {}).entry) } : { kind: "none" };
+    if (kind === "switch" && !F.edited.opp) F.opp_hp = "";
     rerender(); refreshEstimate();
   }));
   document.querySelectorAll("[data-oppentry]").forEach((c) => c.addEventListener("change", () => {

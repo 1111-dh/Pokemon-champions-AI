@@ -208,14 +208,18 @@ class Belief:
         return s
 
     def observe_order(self, sp: str, opp_first: bool, my_speed: float, mega: bool, boosts: int, status: str,
-                      weather: str) -> None:
+                      weather: str, opp_tailwind: bool = False, my_tailwind: bool = False, trick_room: bool = False) -> None:
+        """순풍은 그 쪽 스피드 ×2, 트릭룸은 느린 쪽이 먼저 (엔진 data/moves.ts)."""
         like = []
+        mine = my_speed * (2 if my_tailwind else 1)
         for p in self.mon(sp).particles:
             s = self.speed_of(p, mega, boosts, status, weather)
             if s is None:
                 like.append(1.0)
                 continue
-            ok = 0.5 if s == my_speed else (1.0 if (s > my_speed) == opp_first else 0.0)
+            s *= 2 if opp_tailwind else 1
+            first = (s < mine) if trick_room else (s > mine)
+            ok = 0.5 if s == mine else (1.0 if first == opp_first else 0.0)
             like.append(self.eps_speed + (1 - self.eps_speed) * ok)
         self.reweight(sp, like, "행동 순서")
 

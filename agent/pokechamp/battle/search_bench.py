@@ -80,7 +80,7 @@ def run(conn, client, positions: list[dict], configs: dict[str, SearchConfig], r
         bot_rows.append(vals.get(ref["bot"], np.nan))
         unif_rows.append(float(np.mean(list(vals.values()))))
         for name, cfg in configs.items():
-            sess = BattleSession(conn, pos["my_team"], [s["species"] for s in pos["opp_team"]], client, seed=f"b{pi}")
+            sess = BattleSession(conn, pos["my_team"], [s["species"] for s in pos["opp_team"]], client, seed=f"b{pi}", derive_field=False)
             conv = LogConverter(sess.res)
             for chunk in pos["logs"]:
                 sess.feed(conv.feed(chunk))

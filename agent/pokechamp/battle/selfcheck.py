@@ -114,7 +114,7 @@ def run(conn, client: EngineClient, n_battles: int, seed: str, mode: str = "full
         mine, opp = teams[0]["result"]["team"], teams[1]["result"]["team"]
         picks = {s: "team " + "".join(str(i + 1) for i in rng.sample(range(6), 3)) for s in ("p1", "p2")}
         r = client.new_battle(mine, opp, seed=f"{seed}-{b}", picks=picks)
-        state = BattleState(mine, [base_of(s["species"]) for s in opp], base_of)
+        state = BattleState(mine, [base_of(s["species"]) for s in opp], base_of)   # 글자 입력 경로: 벽·설치기는 기술에서 만든다
         # 일루전(조로아크)이 있는 판은 겉보기와 실제가 달라 따로 센다 (KNOWN_GAPS)
         illusion = any(to_id(s.get("ability") or "") == "illusion" for s in mine + opp)
         stats["illusion_battles"] += int(illusion)
@@ -124,7 +124,8 @@ def run(conn, client: EngineClient, n_battles: int, seed: str, mode: str = "full
         lines = r["log"]
         for step in range(max_steps):
             events = conv.feed(lines)
-            body = [e for e in events if e.kind != "turn"]
+            # 벽·설치기·트릭룸 사건은 사용자가 입력하지 않는다 (기술에서 자동으로 만든다)
+            body = [e for e in events if e.kind not in ("turn", "sidestart", "sideend", "room", "courtchange")]
             given = sparse(body) if mode == "sparse" else body
             text = bt.render(given)
             parsed = bt.parse(text) if text else None
