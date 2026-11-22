@@ -283,7 +283,7 @@ def test_team_builder_api(conn):
     assert not any(t["name"] == "_pytest_빌더" for t in list_teams(conn))
 
 
-def _field_live(conn):
+def _field_live(conn, slots=(1, 2, 3)):
     from pokechamp.battle.live import LiveBattle
     from pokechamp.battle.search import SearchConfig
     from pokechamp.engine_client import EngineClient
@@ -297,7 +297,7 @@ def _field_live(conn):
     ]
     lb = LiveBattle(conn, EngineClient(), team, ["garchomp", "primarina", "hippowdon", "archaludon", "mimikyu", "lucario"],
                     cfg=SearchConfig(seed="t", samples=2, model_reps=2))
-    lb.start([1, 2, 3], "하마돈")
+    lb.start(list(slots), "하마돈")
     return lb
 
 
@@ -382,4 +382,52 @@ def test_manual_field_change_is_recorded(conn):
     lb.set_field("opp", "reflect", True, turns=3)
     v = lb.submit_turn({"first": "opp", "me": {"kind": "move", "move": "earthquake"}, "opp": {"kind": "none"}, "opp_hp": 80})
     assert "상대 쪽 리플렉터 깔림 3턴" in v["history"][-1]
+    lb.end("aborted", save=False)
+
+
+def test_forced_switch_by_whirlwind_onto_hazards(conn):
+    lb = _field_live(conn)
+    lb.set_field("me", "stealthrock", True)
+    mx = lb.sess.my_stats[("charizard", False)]["hp"]
+    v = lb.submit_turn({"first": "me", "me": {"kind": "move", "move": "earthquake"}, "opp": {"kind": "move", "move": "whirlwind"},
+                        "opp_hp": 70, "forced": {"me": {"species": "charizard", "after": "opp"}}})
+    zard = next(m for m in v["mine"] if m["species"] == "charizard")
+    chomp = next(m for m in v["mine"] if m["species"] == "garchomp")
+    assert zard["active"] and not chomp["active"] and zard["hp_abs"] == mx - mx // 2     # 끌려 나온 리자몽이 스텔스록을 맞는다
+    assert "내 교체 리자몽" in v["history"][-1] and v["history"][-1].index("날려버리기") < v["history"][-1].index("내 교체 리자몽")
+    lb.end("aborted", save=False)
+
+
+def test_dragged_side_loses_its_later_move(conn):
+    lb = _field_live(conn)
+    v = lb.submit_turn({"first": "opp", "me": {"kind": "move", "move": "earthquake"}, "opp": {"kind": "move", "move": "whirlwind"},
+                        "forced": {"me": {"species": "primarina", "after": "opp"}}})
+    assert "지진" not in v["history"][-1]                       # 먼저 끌려 나갔으니 내 기술은 나가지 않는다
+    lb.end("aborted", save=False)
+
+
+def test_self_switch_move_then_incoming_is_hit(conn):
+    lb = _field_live(conn, slots=(3, 1, 2))                     # 누리레느 선봉
+    v = lb.submit_turn({"first": "me", "me": {"kind": "move", "move": "flipturn"}, "opp": {"kind": "move", "move": "earthquake"},
+                        "opp_hp": 90, "my_hp": 120, "forced": {"me": {"species": "garchomp", "after": "me"}}})
+    chomp = next(m for m in v["mine"] if m["species"] == "garchomp")
+    rina = next(m for m in v["mine"] if m["species"] == "primarina")
+    assert chomp["active"] and chomp["hp_abs"] == 120 and rina["hp"] == 100     # 들어온 한카리아스가 지진을 맞았다
+    lb.end("aborted", save=False)
+
+
+def test_baton_pass_keeps_boosts(conn):
+    lb = _field_live(conn)
+    lb.submit_turn({"first": "me", "me": {"kind": "move", "move": "swordsdance"}, "opp": {"kind": "none"}})
+    v = lb.submit_turn({"first": "me", "me": {"kind": "move", "move": "batonpass"}, "opp": {"kind": "none"},
+                        "forced": {"me": {"species": "charizard", "after": "me"}}})
+    zard = next(m for m in v["mine"] if m["species"] == "charizard")
+    assert zard["active"] and zard["boosts"].get("공격") == 2
+    lb.end("aborted", save=False)
+
+
+def test_form_lists_switch_moves(conn):
+    lb = _field_live(conn)
+    f = lb.view()["form"]
+    assert "whirlwind" in f["switch_moves"]["drag"] and "uturn" in f["switch_moves"]["self"]
     lb.end("aborted", save=False)

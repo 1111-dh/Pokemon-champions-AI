@@ -896,6 +896,37 @@ function monCard(m, mine) {
     ${mine && m.moves_note ? `<div class="muted small">${esc(m.moves_note)}</div>` : ""}
     ${!mine && (m.item || m.ability) ? `<div class="muted small">${esc([m.item && (m.item + (m.item_consumed ? "(사용)" : "")), m.ability].filter(Boolean).join(" · "))}</div>` : ""}</div></div>`;
 }
+// ---- 턴 도중 교체 (울부짖기·드래곤테일 / 유턴·볼트체인지·배턴터치 / 레드카드·탈출버튼) ----
+function forcedDefaultAfter(s, F, sm) {
+  const mv = (a) => (a && a.kind === "move" ? a.move : "");
+  const me = s === "me" ? F.me : F.opp;
+  return (sm.self || []).includes(mv(me)) ? s : (s === "me" ? "opp" : "me");
+}
+function forcedRows(f, F) {
+  const sm = f.switch_moves || { drag: [], self: [] };
+  const mv = (a) => (a && a.kind === "move" ? a.move : "");
+  F.forced = F.forced || {};
+  const need = {
+    me: sm.self.includes(mv(F.me)) || sm.drag.includes(mv(F.opp)) || F.forced.me || F.forcedManual,
+    opp: sm.self.includes(mv(F.opp)) || sm.drag.includes(mv(F.me)) || F.forced.opp || F.forcedManual,
+  };
+  const row = (s) => {
+    const bench = (s === "me" ? f.my_bench : f.opp_bench) || [];
+    const cur = F.forced[s] || {};
+    const after = cur.after || forcedDefaultAfter(s, F, sm);
+    const chosen = bench.find((b) => b.id === cur.species);
+    return `<div class="frow"><span class="flabel">${s === "me" ? "내" : "상대"} 턴 중 교체</span>
+      ${bench.map((b) => `<button class="opt${cur.species === b.id ? " on" : ""}" data-forced="${s}:${esc(b.id)}">↔ ${esc(b.name)}</button>`).join("")}
+      ${cur.species ? `<button class="opt" data-forced="${s}:">취소</button>
+        <select class="input input-sm" data-forcedafter="${s}" aria-label="언제 교체됐나">
+          <option value="me" ${after === "me" ? "selected" : ""}>내 기술 직후</option><option value="opp" ${after === "opp" ? "selected" : ""}>상대 기술 직후</option></select>
+        <label class="small">나간 포켓몬 남은 HP${s === "me" ? "" : " %"} <input class="input input-sm" data-forcedhp="${s}" value="${esc(cur.hp_out ?? "")}" placeholder="모르면 비움"></label>
+        ${s === "opp" && chosen ? entryBoxes(chosen.entry, cur.entry || [], "data-forcedentry") : ""}` : `<span class="muted small">들어온 포켓몬을 고르세요</span>`}
+    </div>`;
+  };
+  const rows = ["me", "opp"].filter((s) => need[s]).map(row).join("");
+  return rows + (need.me && need.opp ? "" : `<p class="small"><a href="#" data-forcedmanual>레드카드·탈출버튼 등으로 턴 도중에 교체됐나요?</a></p>`);
+}
 function entryBoxes(opts, chosen, attr) {
   if (!opts || !opts.length) return "";
   return `<div class="entry-box"><span class="muted">나올 때 뜬 메시지:</span> ${opts.map((o) => `<label class="check"><input type="checkbox" ${attr}="${esc(o.key)}"
@@ -953,6 +984,7 @@ function renderLive(v) {
         ${f.opp_can_mega ? `<label class="check"><input type="checkbox" id="f-oppmega" ${F.opp.mega ? "checked" : ""}> 메가진화</label>` : ""}
         <span class="sep"></span>${oppSw}<button class="opt${sel(F.opp.kind === "none")}" data-opp="none:">못 움직임</button>
         ${F.opp.kind === "switch" ? entryBoxes(((f.opp_bench || []).find((b) => b.id === F.opp.species) || {}).entry, F.opp.entry || [], "data-oppentry") : ""}</div>
+      ${forcedRows(f, F)}
       ${isSwapMove(F.me) || isSwapMove(F.opp) ? `<div class="frow"><span class="flabel">도구 교환</span>
         <span>상대가 준 도구</span> ${pickerBtn(`data-lpick="given"`, F.swap_given ?? f.opp_item_guess ?? "", "도구")}
         <span class="muted">내가 준 도구: ${esc(f.my_item || "없음")} · 받은 도구로 다음 기술부터 계산합니다 (구애 계열이면 그 기술로 고정)</span></div>` : ""}
@@ -1087,6 +1119,26 @@ function bindLive(v) {
     if (kind === "switch" && !F.edited.opp) F.opp_hp = "";
     rerender(); refreshEstimate();
   }));
+  document.querySelectorAll("[data-forced]").forEach((b) => b.addEventListener("click", () => {
+    const [s, id] = b.dataset.forced.split(":");
+    F.forced = F.forced || {};
+    if (!id) delete F.forced[s];
+    else {
+      const bench = (s === "me" ? v.form.my_bench : v.form.opp_bench) || [];
+      F.forced[s] = { species: id, entry: s === "opp" ? defaults((bench.find((x) => x.id === id) || {}).entry) : [] };
+      // 남은 HP 칸은 턴이 끝났을 때 나와 있는 포켓몬(들어온 쪽)의 값이다
+      if (s === "me" && !F.edited.me) F.my_hp = "";
+      if (s === "opp" && !F.edited.opp) F.opp_hp = "";
+    }
+    rerender();
+  }));
+  document.querySelectorAll("[data-forcedafter]").forEach((sel) => sel.addEventListener("change", () => { F.forced[sel.dataset.forcedafter].after = sel.value; }));
+  document.querySelectorAll("[data-forcedhp]").forEach((inp) => inp.addEventListener("input", () => { F.forced[inp.dataset.forcedhp].hp_out = inp.value; }));
+  document.querySelectorAll("[data-forcedentry]").forEach((c) => c.addEventListener("change", () => {
+    F.forced.opp.entry = [...document.querySelectorAll("[data-forcedentry]")].filter((x) => x.checked).map((x) => x.dataset.forcedentry);
+  }));
+  const fm = document.querySelector("[data-forcedmanual]");
+  if (fm) fm.addEventListener("click", (e) => { e.preventDefault(); F.forcedManual = true; rerender(); });
   document.querySelectorAll("[data-oppentry]").forEach((c) => c.addEventListener("change", () => {
     F.opp.entry = [...document.querySelectorAll("[data-oppentry]")].filter((x) => x.checked).map((x) => x.dataset.oppentry);
   }));
@@ -1133,7 +1185,10 @@ function bindLive(v) {
     const extras = { ...F.extras };
     const form = { first: F.first, me: F.me, opp: F.opp, my_hp: F.my_hp === "" ? null : Number(F.my_hp),
       opp_hp: F.opp_hp === "" ? null : Number(F.opp_hp), extras,
-      swap: { given: F.swap_given ?? (v.form.opp_item_guess || "") }, knocked: F.knocked || "" };
+      swap: { given: F.swap_given ?? (v.form.opp_item_guess || "") }, knocked: F.knocked || "",
+      forced: Object.fromEntries(Object.entries(F.forced || {}).filter(([, x]) => x && x.species).map(([s, x]) => [s,
+        { species: x.species, after: x.after || forcedDefaultAfter(s, F, v.form.switch_moves || { self: [] }),
+          hp_out: x.hp_out === "" || x.hp_out == null ? null : Number(x.hp_out), entry: x.entry || [] }])) };
     try { renderLive(await api("/api/live/turn", { id: live.id, form })); }
     catch (e) { $("#live-preview").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
   }));
