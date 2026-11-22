@@ -36,6 +36,9 @@ ANNOUNCE_ABILITIES = ENTRY_ABILITIES | {"pressure", "unnerve", "moldbreaker", "t
                                         "neutralizinggas", "screencleaner", "curiousmedicine", "asonespectrier", "asoneglastrier"}
 ENTRY_ITEMS = {"airballoon"}
 # 한 번 쓰고 사라지는 도구 (열매는 DB의 is_berry로 판단하고, 그 밖의 것은 여기 둔다)
+# 턴 도중 교체 (엔진 data/moves.ts): 맞은 쪽을 끌어내는 기술 / 쓴 쪽이 빠지는 기술. 레드카드·탈출버튼은 화면에서 '누구 기술 뒤'를 고른다
+DRAG_MOVES = {"roar", "whirlwind", "dragontail", "circlethrow"}
+SELF_SWITCH_MOVES = {"uturn", "voltswitch", "flipturn", "partingshot", "teleport", "chillyreception", "batonpass", "shedtail"}
 CONSUMABLE_EXTRA = {"focussash", "whiteherb", "mentalherb", "powerherb", "weaknesspolicy", "redcard", "ejectbutton", "ejectpack",
                     "throatspray", "roomservice", "blunderpolicy", "airballoon", "adrenalineorb", "absorbbulb", "cellbattery",
                     "luminousmoss", "snowball", "electricseed", "grassyseed", "psychicseed", "mistyseed", "boosterenergy",
@@ -196,6 +199,24 @@ class LiveBattle:
         if to_id(st.get("item") or "") in ENTRY_ITEMS and not (m and m.item_consumed):
             keys.append(f"item:{to_id(st.get('item'))}")
         return keys
+
+    def _forced_switches(self, raw: dict, me_act: dict, op_act: dict) -> dict[str, dict]:
+        """폼의 forced {me|opp: {species, after?, hp_out?, entry?}} → 정리. after(누구 기술 직후)의 기본값:
+        그 쪽이 스스로 빠지는 기술을 썼으면 그 쪽, 상대가 끌어내는 기술을 썼으면 상대, 그 밖(레드카드·탈출버튼)은 상대."""
+        acts = {"me": me_act, "opp": op_act}
+        out: dict[str, dict] = {}
+        for s in ("me", "opp"):
+            x = raw.get(s) or {}
+            if not x.get("species"):
+                continue
+            o = "opp" if s == "me" else "me"
+            mv = lambda k: to_id(acts[k].get("move") or "") if acts[k].get("kind") == "move" else ""   # noqa: E731
+            after = x.get("after") or (s if mv(s) in SELF_SWITCH_MOVES else o)
+            sp = self.sess.res(x["species"])
+            out[s] = {"species": sp, "after": after, "hp_out": x.get("hp_out"),
+                      "entry": self._my_entry_keys(sp) if s == "me" else list(x.get("entry") or []),
+                      "batonpass": after == s and mv(s) == "batonpass"}
+        return out
 
     def _switch_in(self, entries: list[tuple[str, str, list[str]]]) -> list[Event]:
         """교체 사건을 먼저 적용한 뒤 등장 알림을 적용한다 (위협을 받는 쪽을 정확히 알려면 교체가 먼저다). 적용한 사건을 돌려준다."""
@@ -418,7 +439,8 @@ class LiveBattle:
         st = self.sess.state
         me = st.me.mons.get(st.me.active or "")
         op = st.opp.mons.get(st.opp.active or "")
-        out: dict[str, Any] = {"phase": self.phase, "need_replace": self.need_replace}
+        out: dict[str, Any] = {"phase": self.phase, "need_replace": self.need_replace,
+                               "switch_moves": {"drag": sorted(DRAG_MOVES), "self": sorted(SELF_SWITCH_MOVES)}}
         if me and not me.fainted:
             out["my_moves"] = [{"id": to_id(m), "name": self.ko("moves", to_id(m))} for m in (me.set or {}).get("moves", [])]
             out["my_can_mega"] = bool(self.sess.mega_of(me.set or {})) and not st.me.mega_used
@@ -669,20 +691,49 @@ class LiveBattle:
         opp_hp = f.get("opp_hp")
         order = [("me", me_act), ("opp", op_act)] if first == "me" else [("opp", op_act), ("me", me_act)]
         hp_done = {"me": False, "opp": False}
+        forced = self._forced_switches(f.get("forced") or {}, me_act, op_act)
+        applied: list[Event] = []          # 턴 도중 교체 때문에 먼저 적용한 사건 (기록 순서를 지킨다)
+        cancelled: set[str] = set()        # 움직이기 전에 끌려 나간 쪽 (그 기술은 나가지 않는다)
+
+        def flush() -> None:
+            if ev:
+                self.warnings += self.sess.feed(list(ev))
+                applied.extend(ev)
+                ev.clear()
+
+        def switch_after(mover: str) -> None:
+            """mover의 기술 직후에 일어나는 턴 도중 교체: 그 지점까지 적용하고 교체·등장 효과를 넣는다."""
+            for s, fs in forced.items():
+                if fs["after"] != mover or fs.get("done"):
+                    continue
+                fs["done"] = True
+                sd = st.me if s == "me" else st.opp
+                if s == mover and fs.get("hp_out") not in (None, ""):
+                    ev.append(self._hp_event(s, fs["hp_out"]))
+                passed = dict(sd.mons[sd.active].boosts) if fs.get("batonpass") and sd.active else {}
+                flush()
+                applied.extend(self._switch_in([(s, fs["species"], fs["entry"])]))
+                for k, v in passed.items():
+                    if v:
+                        ev.append(Event("setboost", s, stat=k, amount=v, note="[from] move: Baton Pass"))
+                if s != mover:
+                    cancelled.add(s)
+
         for side, a in order:
-            if a.get("kind") != "move" or not a.get("move"):
+            if a.get("kind") != "move" or not a.get("move") or side in cancelled:
                 continue
             a["move"] = self._move_id(a["move"])
             ev.append(Event("move", side, move=a["move"]))
             other = "opp" if side == "me" else "me"
-            val = opp_hp if other == "opp" else my_hp
+            leaving = other in forced and forced[other]["after"] == side     # 이 기술에 맞고 끌려 나간다
+            val = (forced[other].get("hp_out") if leaving else (opp_hp if other == "opp" else my_hp))
             hit = False
             if val is not None and val != "":
                 before = st.opp.mons[st.opp.active].hp if other == "opp" and st.opp.active else (
                     st.me.mons[st.me.active].hp_abs if st.me.active else None)
                 hit = before is None or float(val) < float(before)
                 ev.append(self._hp_event(other, val))
-                hp_done[other] = True
+                hp_done[other] = hp_done[other] or not leaving
                 info = self.moves_info([a["move"]]).get(a["move"], {})
                 if hit and info.get("category") in ("Physical", "Special") and self._has_balloon(other):
                     ev.append(Event("item", other, item="airballoon", value="consumed"))
@@ -704,6 +755,9 @@ class LiveBattle:
                     cur = (mm.held if mm.held is not None else ("" if mm.item_consumed else to_id((mm.set or {}).get("item") or ""))) if mm else ""
                     if cur and not (mm.mega or (self.sess.mega_of(mm.set or {}) and cur == to_id((mm.set or {}).get("item") or ""))):
                         ev.append(Event("item", "me", item=cur, value="lost", note="[from] move: Knock Off"))
+            switch_after(side)
+        for mover in ("me", "opp"):            # 그 쪽 기술이 없었어도(레드카드 등) 턴 안에서 처리한다
+            switch_after(mover)
         # 4) 남은 HP (기술을 안 맞았어도 반동·회복 등으로 바뀐 값)
         for side, val in (("me", my_hp), ("opp", opp_hp)):
             if not hp_done[side] and val is not None and val != "":
@@ -735,9 +789,9 @@ class LiveBattle:
             ev.append(Event("ability", "opp", ability=ab))
         if x.get("weather"):
             ev.append(Event("weather", value=x["weather"]))
-        if not ev and not already:
+        if not ev and not already and not applied:
             raise ValueError("이번 턴에 일어난 일이 없다 (행동을 골라 주세요)")
-        return self._apply_events(ev, already=already)
+        return self._apply_events(ev, already=already + applied)
 
     def _has_balloon(self, side: str) -> bool:
         st = self.sess.state
