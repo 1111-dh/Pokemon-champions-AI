@@ -248,6 +248,14 @@ class LogConverter:
                     continue
                 _source_ability(args, src, mon, add)
                 add(Event("weather", None, value=WEATHERS.get(args[0], to_id(args[0]))))
+            elif cmd in ("-sidestart", "-sideend"):
+                # 벽·순풍·설치기: "-sidestart|p1: 이름|Reflect" 또는 "|p2|move: Stealth Rock"
+                side = side_of(args[0][:2])
+                add(Event("sidestart" if cmd == "-sidestart" else "sideend", side, value=to_id(args[1].replace("move: ", ""))))
+            elif cmd == "-swapsideconditions":
+                add(Event("courtchange", None))
+            elif cmd in ("-fieldstart", "-fieldend") and to_id(args[0].replace("move: ", "")) == "trickroom":
+                add(Event("room", None, value="trickroom" if cmd == "-fieldstart" else "none"))
             elif cmd == "-fieldstart":
                 t = args[0].replace("move: ", "")
                 if t in TERRAINS:

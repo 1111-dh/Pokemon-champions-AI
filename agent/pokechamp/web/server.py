@@ -64,6 +64,9 @@ class App:
             "/api/live/preview": lambda b: self._live(b).preview(str(b.get("text") or "")),
             "/api/live/apply": lambda b: json.loads(json.dumps(self._live(b).apply(str(b.get("text") or "")), default=float)),
             "/api/live/why": lambda b: self._live(b).explain(),
+            "/api/live/field": lambda b: json.loads(json.dumps(self._live(b).set_field(
+                str(b.get("side") or ""), str(b.get("cond") or ""), bool(b.get("on")), int(b.get("turns") or 0),
+                int(b.get("layers") or 0)), default=float)),
             "/api/live/view": lambda b: json.loads(json.dumps(self._live(b).view(), default=float)),
             "/api/live/end": lambda b: self._live(b).end(str(b.get("result") or ""), bool(b.get("save", True))),
             "/api/battle/delete": self.battle_delete,

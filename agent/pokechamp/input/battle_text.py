@@ -13,6 +13,8 @@
   랭크 설정   상대 공격 =6 (배북 등) · 상대 하락 랭크 회복 (하얀허브) · 상대 랭크 초기화 (흑안개 등)
   기타        상대 선공 · 상대 급소 · 상대 빗나감 · 상대 실패 · 상대 효과 없음
   날씨·필드   날씨 모래바람 · 날씨 끝 · 필드 그래스필드 · 필드 끝
+  벽·설치기   내 쪽 리플렉터 깔림 3턴 · 상대 쪽 압정뿌리기 깔림 2겹 · 내 쪽 독압정 사라짐 · 트릭룸 시작 4턴 · 트릭룸 끝
+              · 벽·설치기 맞바꿈 (기술 입력에서 자동으로 생기므로 보통은 직접 쓰지 않는다)
 
 해석하지 못한 문장은 errors로 돌려준다(이 문장만 LLM으로 구조화하는 것은 다음 단계, 스키마 검증 필수).
 render()는 사건을 위 형식의 한 줄로 되돌린다 (해석 결과를 사용자에게 다시 보여 줄 때 쓴다).
@@ -147,6 +149,11 @@ class BattleText:
         side = SIDE_WORDS.get(parts[0]) if parts else None
         rest = (parts[1] if len(parts) > 1 else "").strip() if side else seg.strip()
         if side is None:
+            m = re.fullmatch(r"트릭룸\s*(시작|끝)(?:\s*(\d+)\s*턴)?", rest)
+            if m:
+                return Event("room", None, value="trickroom" if m.group(1) == "시작" else "none", amount=int(m.group(2) or 0))
+            if re.fullmatch(r"벽\s*·?\s*설치기\s*맞바꿈", rest):
+                return Event("courtchange", None)
             m = re.fullmatch(r"날씨\s*(.+)", rest)
             if m:
                 w = WEATHER_ALIASES.get(m.group(1).strip())
@@ -162,6 +169,10 @@ class BattleText:
             raise ValueError(f"'{seg}': '상대' 또는 '내'로 시작해야 한다")
         if not rest:
             raise ValueError(f"'{seg}': 무엇이 일어났는지 없다")
+        m = re.fullmatch(r"쪽\s+(.+?)\s+(깔림|사라짐)(?:\s+(\d+)\s*(?:턴|겹))?", rest)
+        if m:
+            cond = self.lookup("moves", m.group(1)) or to_id(m.group(1))
+            return Event("sidestart" if m.group(2) == "깔림" else "sideend", side, value=cond, amount=int(m.group(3) or 0))
         sp_re = r"(?:(.+?)\s+)?"
         simple = {"선공": "first", "급소": "crit", "빗나감": "miss", "빗나갔다": "miss", "실패": "fail",
                   "효과없음": "immune", "메가진화": "mega", "메가": "mega"}
@@ -281,6 +292,14 @@ class BattleText:
             return f"날씨 {WEATHER_KO.get(e.value, e.value)}"
         if k == "terrain":
             return f"필드 {TERRAIN_KO.get(e.value, e.value)}"
+        if k in ("sidestart", "sideend"):
+            unit = "겹" if e.value in ("spikes", "toxicspikes", "stealthrock", "stickyweb") else "턴"
+            n = f" {e.amount}{unit}" if k == "sidestart" and e.amount else ""
+            return f"{s} 쪽 {self.name('moves', e.value)} {'깔림' if k == 'sidestart' else '사라짐'}{n}"
+        if k == "room":
+            return f"트릭룸 {'끝' if e.value == 'none' else '시작'}" + (f" {e.amount}턴" if e.value != "none" and e.amount else "")
+        if k == "courtchange":
+            return "벽·설치기 맞바꿈"
         word = {"first": "선공", "crit": "급소", "miss": "빗나감", "fail": "실패", "immune": "효과 없음", "mega": "메가진화"}
         return f"{s} {sp}{word.get(k, k)}"
 

@@ -62,7 +62,7 @@ def run(conn, client: EngineClient, n_battles: int, seed: str, use_damage: bool 
         opp = archetype_team(conn, rng, pool, weights)
         picks = {s: "team " + "".join(str(i + 1) for i in rng.sample(range(6), 3)) for s in ("p1", "p2")}
         r = client.new_battle(mine, [engine_set(s) for s in opp], seed=f"{seed}-{b}", picks=picks)
-        sess = BattleSession(conn, mine, [s["species"] for s in opp], client, n_particles=n_particles,
+        sess = BattleSession(conn, mine, [s["species"] for s in opp], client, n_particles=n_particles, derive_field=False,
                              seed=f"{seed}-{b}", use_damage=use_damage)
         prior = {sp: [p.w for p in mb.particles] for sp, mb in sess.belief.mons.items()}
         prior_parts = {sp: list(mb.particles) for sp, mb in sess.belief.mons.items()}

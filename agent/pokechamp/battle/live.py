@@ -63,6 +63,7 @@ class LiveBattle:
         self.rec: dict[str, Any] | None = None
         self.warnings: list[str] = []
         self.ended = False
+        self._manual_field: list[Event] = []     # 필드 막대에서 직접 바꾼 사건 (다음 턴 기록에 합친다)
         self.phase = "move"                  # move: 이번 턴 입력 / replace: 기절 교체 입력 대기
         self.need_replace = {"me": False, "opp": False}
         self._moves_info: dict[str, dict] = {}
@@ -202,10 +203,99 @@ class LiveBattle:
         self.warnings += self.sess.feed(sw)
         ent: list[Event] = []
         for side, sp, keys in entries:
-            ent += self._entry_events(side, sp, keys)
+            ent += self._hazard_events(side, sp, keys) + self._entry_events(side, sp, keys)
         if ent:
             self.warnings += self.sess.feed(ent)
         return sw + ent
+
+    def _hazard_events(self, side: str, sp: str, keys: list[str] | tuple = ()) -> list[Event]:
+        """설치기 위로 나왔을 때의 등장 효과(엔진 /entry_hazards). 상대는 믿음 가중치 1위 세트로 계산한 추정값이고,
+        HP 사건에 note="hazard"를 달아 데미지 증거로 쓰지 않는다 (화면 HP 칸에서 고칠 수 있다)."""
+        st = self.sess.state
+        sd = st.me if side == "me" else st.opp
+        m = sd.mons.get(sp)
+        d = self._entry_hazard_result(side, sp, keys)
+        if d is None or m is None:
+            return []
+        ev: list[Event] = []
+        if d["damage"]:
+            if side == "me":
+                mx = d["maxhp"]
+                v = max(0, (m.hp_abs if m.hp_abs is not None else mx) - d["damage"])
+                ev.append(Event("hp", "me", species=sp, hp=round(100 * v / mx, 1), hp_abs=v, hp_max=mx, note="hazard"))
+            else:
+                v = max(0, round((m.hp if m.hp is not None else 100) - 100 * d["damage"] / d["maxhp"]))
+                ev.append(Event("hp", "opp", species=sp, hp=v, note="hazard"))
+        if d["status"] and not m.status:
+            ev.append(Event("status", side, species=sp, status=d["status"], note="hazard"))
+        for k, v in d["boosts"].items():
+            ev.append(Event("boost", side, species=sp, stat=k, amount=v, note="hazard"))
+        if d.get("absorbed"):
+            ev.append(Event("sideend", side, value="toxicspikes"))
+        return ev
+
+    def _entry_hazard_result(self, side: str, sp: str, keys: list[str] | tuple = ()) -> dict[str, Any] | None:
+        """그 포켓몬이 지금 그 쪽 설치기 위로 나오면 받는 효과 (엔진 /entry_hazards). 설치기가 없으면 None.
+        도구는 지금 드는 것(트릭·소모 반영), 상대는 드러난 도구·특성과 등장 알림(풍선)을 믿음 1위 세트보다 앞세운다."""
+        from pokechamp.battle.session import engine_set
+        sd = self.sess.state.me if side == "me" else self.sess.state.opp
+        hz = {k: v for k, v in sd.hazards.items() if v}
+        m = sd.mons.get(sp)
+        if not hz or m is None:
+            return None
+        if side == "me":
+            s = dict(engine_set(m.set or {"species": sp}))
+            s["item"] = self.current_item("me", sp)
+        else:
+            s = dict(engine_set(max(self.sess.belief.mon(sp).particles, key=lambda p: p.w).set))
+            if m.held is not None or m.item or m.item_consumed:
+                s["item"] = "" if m.item_consumed and m.held is None else (m.held if m.held is not None else m.item)
+            if m.ability:
+                s["ability"] = m.ability
+        if "item:airballoon" in keys:
+            s["item"] = "airballoon"
+        r = self.client.batch("/entry_hazards", [{"set": s, "mega": m.mega, "hazards": hz}])[0]
+        if not r.get("ok"):
+            self.warnings.append(f"설치기 등장 효과를 계산하지 못했다: {r.get('error')}")
+            return None
+        return r["result"]
+
+    def set_field(self, side: str, cond: str, on: bool, turns: int = 0, layers: int = 0) -> dict[str, Any]:
+        """필드 막대에서 직접 켜고 끄기. side: me|opp|field(트릭룸). turns: 남은 턴(벽·순풍·트릭룸), layers: 겹 수(설치기)."""
+        from pokechamp.battle.state import HAZARD_MAX, TIMED
+        cond = to_id(cond)
+        if cond == "trickroom":
+            ev = Event("room", None, value="trickroom" if on else "none", amount=int(turns or 0))
+        elif cond in TIMED or cond in HAZARD_MAX:
+            if side not in ("me", "opp"):
+                raise ValueError("벽·순풍·설치기는 내 쪽(me)이나 상대 쪽(opp)에 켠다")
+            ev = Event("sidestart" if on else "sideend", side, value=cond,
+                       amount=int((layers if cond in HAZARD_MAX else turns) or 0) if on else 0)
+        else:
+            raise ValueError(f"모르는 필드 조건: {cond}")
+        if self.ended:
+            raise ValueError("이미 끝난 배틀이다")
+        self.warnings += self.sess.feed([ev])
+        self._manual_field.append(ev)
+        return self.view()
+
+    def _field_view(self) -> dict[str, list[dict[str, Any]]]:
+        st = self.sess.state
+        turn = max(st.turn, 1)
+
+        def chips(sd) -> list[dict[str, Any]]:
+            out = [{"id": k, "name": self.ko("moves", k), "remaining": list(c.remaining(turn) or (0, 0)), "layers": None}
+                   for k, c in sd.timed.items()]
+            return out + [{"id": k, "name": self.ko("moves", k), "remaining": None, "layers": n} for k, n in sd.hazards.items()]
+        center = []
+        for cid, clk, names in (("weather", st.weather, WEATHER_KO), ("terrain", st.terrain, TERRAIN_KO)):
+            if clk.kind != "none":
+                rem = clk.remaining(turn)
+                center.append({"id": cid, "name": names.get(clk.kind, clk.kind), "remaining": list(rem) if rem else None, "layers": None})
+        if st.trickroom.kind == "trickroom":
+            center.append({"id": "trickroom", "name": self.ko("moves", "trickroom"),
+                           "remaining": list(st.trickroom.remaining(turn) or (0, 0)), "layers": None})
+        return {"me": chips(st.me), "opp": chips(st.opp), "center": center}
 
     def start(self, slots: list[int], opp_lead: str, opp_lead_entry: list[str] | None = None) -> dict[str, Any]:
         if len(slots) != 3 or len(set(slots)) != 3 or not all(1 <= s <= len(self.my_team) for s in slots):
@@ -289,7 +379,8 @@ class LiveBattle:
                       already: list[Event] | None = None) -> dict[str, Any]:
         """사건을 적용하고 기록한다. already: 이번 입력에서 먼저 적용한 사건(교체·등장 알림), 기록에만 합친다."""
         warns = self.sess.feed(events) if events else []
-        shown = (already or []) + events
+        shown = self._manual_field + (already or []) + events      # 필드 막대에서 직접 바꾼 것도 기록한다 (복기가 같은 상태를 만든다)
+        self._manual_field = []
         self.record["turns"].append({"turn": self.turn, "input": self.bt.render(shown), "recommendation": self.rec,
                                      "warnings": self.warnings + warns})
         self.warnings = self.warnings + warns
@@ -370,10 +461,23 @@ class LiveBattle:
         """고른 행동으로 예상 HP를 낸다 (상대 세트는 믿음에서 가중치 상위 파티클 몇 개의 평균)."""
         from pokechamp.battle.session import engine_set
         st = self.sess.state
-        me, op = st.me.mons.get(st.me.active or ""), st.opp.mons.get(st.opp.active or "")
+        me_sp, op_sp = st.me.active or "", st.opp.active or ""
+        if my.get("kind") == "switch" and my.get("species"):
+            me_sp = self.sess.res(my["species"])
+        if opp.get("kind") == "switch" and opp.get("species"):
+            op_sp = self.sess.res(opp["species"])
+        me, op = st.me.mons.get(me_sp), st.opp.mons.get(op_sp)
         out: dict[str, Any] = {"my_hp": me.hp_abs if me else None, "opp_hp": op.hp if op else None}
         if not me or not op or me.fainted or op.fainted:
             return out
+        notes: list[str] = []
+        # 교체로 들어오는 쪽은 설치기 데미지를 먼저 뺀다
+        hz_me = self._entry_hazard_result("me", me_sp) if me_sp != st.me.active else None
+        hz_op = self._entry_hazard_result("opp", op_sp) if op_sp != st.opp.active else None
+        if hz_me and hz_me["damage"]:
+            notes.append(f"내 설치기 −{hz_me['damage']}")
+        if hz_op and hz_op["damage"]:
+            notes.append(f"상대 설치기 −{round(100 * hz_op['damage'] / hz_op['maxhp'])}%")
         for a in (my, opp):
             if a.get("kind") == "move" and a.get("move"):
                 try:
@@ -381,18 +485,18 @@ class LiveBattle:
                 except ValueError:
                     a["kind"] = "none"
         parts = sorted(self.sess.belief.mon(op.species).particles, key=lambda p: -p.w)[:6]
-        field = self.sess._field()
+        field_to = {d: self.sess._field(d) for d in ("me", "opp")}     # 맞는 쪽의 벽을 넣는다
         reqs, kinds = [], []
         mine_side = {"set": engine_set(me.set), "mega": me.mega or bool(my.get("mega")), "boosts": {k: v for k, v in me.boosts.items() if v}}
         for p in parts:
             theirs = {"set": engine_set(p.set), "mega": op.mega or bool(opp.get("mega") and p.set.get("mega_species")),
                       "boosts": {k: v for k, v in op.boosts.items() if v}, "hpPercent": op.hp}
             if my.get("kind") == "move" and my.get("move"):
-                reqs.append({"attacker": mine_side, "defender": theirs, "move": my["move"], "field": field, "crossCheck": False})
+                reqs.append({"attacker": mine_side, "defender": theirs, "move": my["move"], "field": field_to["opp"], "crossCheck": False})
                 kinds.append(("opp", p.w))
             if opp.get("kind") == "move" and opp.get("move"):
                 reqs.append({"attacker": {k: v for k, v in theirs.items() if k != "hpPercent"}, "defender": mine_side,
-                             "move": opp["move"], "field": field, "crossCheck": False})
+                             "move": opp["move"], "field": field_to["me"], "crossCheck": False})
                 kinds.append(("me", p.w))
         res = self.client.batch("/damage", reqs) if reqs else []
         acc = {"opp": [0.0, 0.0], "me": [0.0, 0.0]}
@@ -404,27 +508,29 @@ class LiveBattle:
             val = 100 * mean / r["result"]["defender"]["maxhp"] if who == "opp" else mean
             acc[who][0] += w * val
             acc[who][1] += w
-        notes: list[str] = []
         cur = me.hp_abs if me.hp_abs is not None else (me.hp_max or (self.sess.my_stats.get((me.species, me.mega)) or {}).get("hp"))
+        if cur is not None and hz_me:
+            cur = max(0, cur - hz_me["damage"])
         my_attacked = my.get("kind") == "move" and acc["opp"][1] > 0
         opp_attacked = opp.get("kind") == "move" and acc["me"][1] > 0
         if op.hp is not None:
-            hp = op.hp - (acc["opp"][0] / acc["opp"][1] if acc["opp"][1] > 0 else 0)
+            start = max(0.0, op.hp - (100 * hz_op["damage"] / hz_op["maxhp"] if hz_op else 0))
+            hp = start - (acc["opp"][0] / acc["opp"][1] if acc["opp"][1] > 0 else 0)
             # 기합의띠: 가득 찬 HP에서 쓰러질 데미지면 1로 버틴다 (상대 도구가 띠로 드러났을 때만)
-            if hp <= 0 and op.hp >= 100 and self.current_item("opp") == "focussash":
+            if hp <= 0 and start >= 100 and self.current_item("opp", op_sp) == "focussash":
                 hp, out["opp_item_used"] = 1, "기합의띠"
                 notes.append("상대 기합의띠로 버팀")
-            hp, used = self._end_of_turn("opp", max(0.0, hp), 100.0, opp_attacked, notes)
+            hp, used = self._end_of_turn("opp", max(0.0, hp), 100.0, opp_attacked, notes, op_sp)
             if used:
-                out["opp_item_used"] = self.ko("items", self.current_item("opp"))
+                out["opp_item_used"] = self.ko("items", self.current_item("opp", op_sp))
             out["opp_hp"] = max(0, round(hp))
         mx = me.hp_max or (self.sess.my_stats.get((me.species, me.mega)) or {}).get("hp")
         if cur is not None and mx:
             hp = cur - (acc["me"][0] / acc["me"][1] if acc["me"][1] > 0 else 0)
-            if hp <= 0 and cur >= mx and self.current_item("me") == "focussash":
+            if hp <= 0 and cur >= mx and self.current_item("me", me_sp) == "focussash":
                 hp, out["my_item_used"] = 1, True
                 notes.append("내 기합의띠로 버팀")
-            hp, used = self._end_of_turn("me", max(0.0, hp), float(mx), my_attacked, notes)
+            hp, used = self._end_of_turn("me", max(0.0, hp), float(mx), my_attacked, notes, me_sp)
             out["my_item_used"] = bool(out.get("my_item_used") or used)
             out["my_hp"] = max(0, round(hp))
         out["notes"] = notes
@@ -439,11 +545,11 @@ class LiveBattle:
                 "SELECT id FROM items WHERE version_id=? AND is_berry=1", (v["id"],))}
         return item in berries or item in CONSUMABLE_EXTRA
 
-    def current_item(self, side: str) -> str:
-        """지금 드는 도구 (내 쪽은 세트로, 상대 쪽은 드러난 것만). 썼거나 잃었으면 ""."""
+    def current_item(self, side: str, species: str | None = None) -> str:
+        """지금 드는 도구 (내 쪽은 세트로, 상대 쪽은 드러난 것만). 썼거나 잃었으면 "". species가 없으면 출전 포켓몬."""
         st = self.sess.state
         sd = st.me if side == "me" else st.opp
-        m = sd.mons.get(sd.active or "")
+        m = sd.mons.get(species or sd.active or "")
         if not m:
             return ""
         if m.held is not None:
@@ -460,15 +566,16 @@ class LiveBattle:
                 "SELECT id, types_json FROM species WHERE version_id=?", (v["id"],))}
         return cache.get(species, [])
 
-    def _end_of_turn(self, side: str, hp: float, mx: float, attacked: bool, notes: list[str]) -> tuple[float, bool]:
+    def _end_of_turn(self, side: str, hp: float, mx: float, attacked: bool, notes: list[str],
+                     species: str | None = None) -> tuple[float, bool]:
         """턴 끝 효과를 예상 HP에 넣는다 (hp·mx는 같은 단위: 내 쪽은 실수치, 상대는 %·100).
         → (HP, 일회용 도구를 썼는지). 생명의구슬은 공격했을 때만."""
         st = self.sess.state
         sd = st.me if side == "me" else st.opp
-        m = sd.mons.get(sd.active or "")
+        m = sd.mons.get(species or sd.active or "")
         if not m or hp <= 0:
             return hp, False
-        item = self.current_item(side)
+        item = self.current_item(side, m.species)
         ab = to_id(((m.set or {}).get("ability") if side == "me" else m.ability) or "")
         frac = lambda f: mx * f   # noqa: E731
         label = "내" if side == "me" else "상대"
@@ -726,6 +833,7 @@ class LiveBattle:
                 "mine": mine, "opp": opp, "mega_used": {"me": st.me.mega_used, "opp": st.opp.mega_used},
                 "weather": {"name": WEATHER_KO.get(w["kind"], w["kind"]), "remaining": w["remaining"]} if w else None,
                 "terrain": {"name": TERRAIN_KO.get(t["kind"], t["kind"]), "remaining": t["remaining"]} if t else None,
+                "field": self._field_view(),
                 "recommendation": self.rec, "warnings": self.warnings, "history": [x["input"] for x in self.record["turns"]][-12:],
                 "team": self.team_name}
 

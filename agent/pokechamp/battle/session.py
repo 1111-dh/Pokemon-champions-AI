@@ -32,13 +32,14 @@ def engine_set(st: dict) -> dict:
 
 class BattleSession:
     def __init__(self, conn, my_team: list[dict[str, Any]], opp_species: list[str], client: EngineClient | None = None,
-                 n_particles: int = 48, seed: str = "session", use_damage: bool = True):
+                 n_particles: int = 48, seed: str = "session", use_damage: bool = True, derive_field: bool = True):
+        """derive_field: 사용자 입력 경로(실전·복기·텍스트)는 True(기술로 벽·설치기를 만든다), 엔진 로그 경로는 False."""
         self.conn = conn
         self.client = client or EngineClient()
         self.res = SpeciesResolver(conn)
         self.my_team = my_team
         opp = [self.res(s) for s in opp_species]
-        self.state = BattleState(my_team, opp, self.res)
+        self.state = BattleState(my_team, opp, self.res, derive_field=derive_field)
         v = active_version(conn)
         self.belief = Belief(conn, opp, self.client, n=n_particles, seed=seed, regulation=v["regulation"] if v else None)
         self.use_damage = use_damage
@@ -101,8 +102,22 @@ class BattleSession:
         self.belief.contradictions = []
         return warns
 
-    def _field(self) -> dict:
-        f = {}
+    def screen_state(self, side: str, cond: str) -> str:
+        """벽이 "up"(확실히 있음) / "maybe"(빛의점토를 몰라 이미 끝났을 수도 있음) / "none"."""
+        sd = self.state.me if side == "me" else self.state.opp
+        clk = sd.timed.get(cond)
+        if clk is None:
+            return "none"
+        rem = clk.remaining(max(self.state.turn, 1)) or (0, 0)
+        return "up" if rem[0] >= 1 else ("maybe" if rem[1] >= 1 else "none")
+
+    def _field(self, defender: str | None = None) -> dict:
+        """엔진 /damage field. defender("me"|"opp")가 있으면 맞는 쪽 벽을 screens로 넣는다."""
+        f: dict[str, Any] = {}
+        if defender:
+            screens = [c for c in ("reflect", "lightscreen", "auroraveil") if self.screen_state(defender, c) == "up"]
+            if screens:
+                f["screens"] = screens
         if self.state.weather.kind in WEATHER_ENGINE:
             f["weather"] = WEATHER_ENGINE[self.state.weather.kind]
         if self.state.terrain.kind in TERRAIN_ENGINE:
@@ -140,17 +155,24 @@ class BattleSession:
                 om = st.opp.mons[st.opp.active]
                 if ms is not None and not om.transformed:
                     self.belief.observe_order(st.opp.active, opp_first=(e.side == "me"), my_speed=ms, mega=om.mega,
-                                              boosts=om.boosts.get("spe", 0), status=om.status, weather=st.weather.kind)
+                                              boosts=om.boosts.get("spe", 0), status=om.status, weather=st.weather.kind,
+                                              opp_tailwind="tailwind" in st.opp.timed, my_tailwind="tailwind" in st.me.timed,
+                                              trick_room=st.trickroom.kind == "trickroom")
                     self.evidence["order"] += 1
             self.turn_moves.append((e.side or "", sp or "", mv["priority"]))
             if self.use_damage and mv["category"] != "Status" and e.move not in MULTIHIT and st.me.active and st.opp.active:
                 me, op = st.me.mons[st.me.active], st.opp.mons[st.opp.active]
+                if e.side == "me" and op.hp_estimated:     # 상대 HP가 설치기 추정값이면 이 데미지는 증거로 쓰지 않는다
+                    return
+                defender_side = "opp" if e.side == "me" else "me"
+                if any(self.screen_state(defender_side, c) == "maybe" for c in ("reflect", "lightscreen", "auroraveil")):
+                    return                                 # 벽이 있었는지 모르면 데미지 증거로 쓰지 않는다
                 defender = op if e.side == "me" else me
                 self.pending = {"side": e.side, "move": e.move, "crit": False, "me": st.me.active, "opp": st.opp.active,
                                 "before": (defender.hp_abs if e.side == "opp" else defender.hp),
                                 "my_boosts": {k: v for k, v in me.boosts.items() if v}, "opp_boosts": {k: v for k, v in op.boosts.items() if v},
                                 "my_status": me.status, "opp_status": op.status, "my_mega": me.mega, "opp_mega": op.mega,
-                                "field": self._field(), "my_maxhp": me.hp_max}
+                                "field": self._field("opp" if e.side == "me" else "me"), "my_maxhp": me.hp_max}
             return
         if e.kind == "hp" and self.pending:
             p, self.pending = self.pending, None

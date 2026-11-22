@@ -156,7 +156,19 @@ class Searcher:
         if t.kind != "none":
             rem = t.remaining(max(st.turn, 1))
             field.update(terrain=t.kind, terrainTurns=max(1, rem[0] if rem else 5))
-        return {"p1": p1, "p2": p2, "seed": f"{self.cfg.seed}-det{k}-{st.turn}",
+        def conds(sd) -> dict[str, int]:      # 벽·순풍은 남은 턴 하한, 설치기는 겹 수
+            # 이미 끝났을 수도 있는 것(남은 턴 하한 0)은 넣지 않는다
+            out = {c: (clk.remaining(max(st.turn, 1)) or (0, 0))[0] for c, clk in sd.timed.items()}
+            out = {c: n for c, n in out.items() if n >= 1}
+            out.update(sd.hazards)
+            return out
+        extra: dict[str, Any] = {}
+        side_conds = {k: v for k, v in (("p1", conds(st.me)), ("p2", conds(st.opp))) if v}
+        if side_conds:
+            extra["sideConditions"] = side_conds
+        if st.trickroom.kind == "trickroom":
+            extra["trickRoom"] = max(1, (st.trickroom.remaining(max(st.turn, 1)) or (1, 1))[0])
+        return {**extra, "p1": p1, "p2": p2, "seed": f"{self.cfg.seed}-det{k}-{st.turn}",
                 "picks": {"p1": "team " + "".join(str(i + 1) for i in range(len(my_order))),
                           "p2": "team " + "".join(str(i + 1) for i in range(len(opp_order)))},
                 "mons": mons, "field": field, "megaUsed": {"p1": st.me.mega_used, "p2": st.opp.mega_used},

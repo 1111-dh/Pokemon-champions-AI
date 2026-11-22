@@ -30,7 +30,7 @@ def play(conn, client: EngineClient, team_a: list[dict], team_b: list[dict], pic
     opp_side = "p2" if agent_side == "p1" else "p1"
     mine, theirs = (team_a, team_b) if agent_side == "p1" else (team_b, team_a)
     r = client.new_battle(team_a, team_b, seed=seed, picks=picks)
-    sess = BattleSession(conn, mine, [s["species"] for s in theirs], client, seed=seed)
+    sess = BattleSession(conn, mine, [s["species"] for s in theirs], client, seed=seed, derive_field=False)
     brought = [mine[int(ch) - 1]["species"] for ch in picks[agent_side].split()[1]]
     srch = Searcher(sess, brought, cfg)
     conv = LogConverter(sess.res, me=agent_side)
